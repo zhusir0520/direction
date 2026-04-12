@@ -1,0 +1,17 @@
+# YOLOv8s to ONNX转换脚本依赖
+# 安装: pip install -r requirements.txt
+
+# 核心依赖
+ultralytics>=8.1.0  # YOLOv8模型加载和转换
+torch>=2.0.0        # PyTorch框架
+onnx>=1.15.0        # ONNX格式支持
+onnxruntime>=1.16.0 # ONNX模型推理验证
+numpy>=1.24.0       # 数值计算
+
+# 可选依赖（用于模型简化）
+# onnxsim>=0.4.33    # ONNX模型简化工具
+# opencv-python>=4.8.0 # 图像处理验证（可选）
+
+# 注意：根据您的Python环境，可能需要指定torch版本（CPU/GPU）
+# 对于CPU环境：pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cpu
+# 对于CUDA 11.8：pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu118

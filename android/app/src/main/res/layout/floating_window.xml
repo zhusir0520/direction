@@ -1,0 +1,45 @@
+<?xml version="1.0" encoding="utf-8"?>
+<RelativeLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="wrap_content"
+    android:layout_height="wrap_content"
+    android:padding="0dp"
+    android:clipChildren="false"
+    android:clipToPadding="false">
+
+    <!-- 警告文本（默认隐藏） -->
+    <TextView
+        android:id="@+id/warning_text"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:layout_centerHorizontal="true"
+        android:layout_below="@id/floating_button"
+        android:layout_marginTop="8dp"
+        android:padding="20dp"
+        android:background="#00000000"
+        android:textColor="#00FFFFFF"
+        android:textSize="20sp"
+        android:textStyle="bold"
+        android:gravity="center"
+        android:visibility="gone"
+        android:elevation="0dp"
+        android:maxWidth="350dp"
+        android:maxLines="3"
+        android:ellipsize="end"
+        android:outlineProvider="bounds"
+        android:outlineSpotShadowColor="@android:color/black"
+        android:alpha="0.0" />
+
+    <!-- 悬浮窗主按钮 -->
+    <Button
+        android:id="@+id/floating_button"
+        android:layout_width="60dp"
+        android:layout_height="60dp"
+        android:layout_centerInParent="true"
+        android:background="@drawable/circle_button_background"
+        android:text="录制中"
+        android:textColor="#00FFFFFF"
+        android:textSize="12sp"
+        android:gravity="center"
+        android:elevation="0dp" />
+
+</RelativeLayout>

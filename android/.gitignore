@@ -1,0 +1,52 @@
+# Gradle
+.gradle/
+build/
+out/
+
+# IntelliJ IDEA
+.idea/
+*.iml
+*.iws
+*.ipr
+
+# Android Studio
+.cxx/
+local.properties
+.navigation/
+*.log
+*.tgz
+
+# 本地开发配置
+local.md
+local.claude.md
+../.claude/
+
+# 构建输出
+app/build/
+app/.cxx/
+app/.gradle/
+app/.idea/
+
+# 系统文件
+.DS_Store
+Thumbs.db
+
+# 日志文件
+*.log
+logs/
+
+# 临时文件
+*.tmp
+*.temp
+
+# 开发环境配置文件（个人）
+.env
+.env.local
+*.env
+
+# 密钥文件
+*.keystore
+*.jks
+
+# 缓存文件
+.cache/

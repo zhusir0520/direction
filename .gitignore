@@ -1,0 +1,35 @@
+# IDE and editor directories
+.claude/
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# Build artifacts
+build/
+out/
+bin/
+target/
+*.apk
+*.aab
+
+# Log files
+*.log
+nsfw-server.log
+adb_log.txt
+
+# Debug images
+yolo_cropped_debug_*.jpg
+yolo_detections_debug_*.jpg
+
+# Temporary files
+*.tmp
+*.temp
+
+# OS metadata
+.DS_Store
+Thumbs.db
+
+# Local configuration files
+local.claude.md
+settings.local.json

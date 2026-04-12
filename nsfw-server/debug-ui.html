@@ -1,0 +1,1202 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>NSFW Detection Debug UI</title>
+    <style>
+        * {
+            box-sizing: border-box;
+            margin: 0;
+            padding: 0;
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+        }
+
+        body {
+            background: linear-gradient(135deg, #1a1a2e 0%, #16213e 100%);
+            color: #e6e6e6;
+            min-height: 100vh;
+            padding: 20px;
+        }
+
+        .container {
+            max-width: 1200px;
+            margin: 0 auto;
+            padding: 20px;
+        }
+
+        header {
+            text-align: center;
+            margin-bottom: 40px;
+            padding-bottom: 20px;
+            border-bottom: 2px solid #00adb5;
+        }
+
+        h1 {
+            font-size: 2.5rem;
+            color: #00adb5;
+            margin-bottom: 10px;
+            text-shadow: 0 0 10px rgba(0, 173, 181, 0.3);
+        }
+
+        .subtitle {
+            font-size: 1.1rem;
+            color: #b0b0b0;
+        }
+
+        .main-content {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 30px;
+            margin-bottom: 40px;
+        }
+
+        @media (max-width: 900px) {
+            .main-content {
+                grid-template-columns: 1fr;
+            }
+        }
+
+        .upload-section, .results-section {
+            background: rgba(30, 30, 46, 0.8);
+            border-radius: 15px;
+            padding: 25px;
+            box-shadow: 0 10px 30px rgba(0, 0, 0, 0.3);
+            border: 1px solid #393e46;
+        }
+
+        .section-title {
+            font-size: 1.5rem;
+            color: #00adb5;
+            margin-bottom: 20px;
+            padding-bottom: 10px;
+            border-bottom: 1px solid #393e46;
+        }
+
+        .upload-area {
+            border: 3px dashed #393e46;
+            border-radius: 10px;
+            padding: 40px 20px;
+            text-align: center;
+            cursor: pointer;
+            transition: all 0.3s ease;
+            margin-bottom: 20px;
+            background: rgba(57, 62, 70, 0.2);
+        }
+
+        .upload-area:hover {
+            border-color: #00adb5;
+            background: rgba(0, 173, 181, 0.1);
+        }
+
+        .upload-area.drag-over {
+            border-color: #00adb5;
+            background: rgba(0, 173, 181, 0.2);
+        }
+
+        .upload-icon {
+            font-size: 3rem;
+            color: #00adb5;
+            margin-bottom: 15px;
+        }
+
+        .upload-text {
+            font-size: 1.1rem;
+            margin-bottom: 10px;
+        }
+
+        .file-input {
+            display: none;
+        }
+
+        .file-name {
+            margin-top: 10px;
+            font-size: 0.9rem;
+            color: #b0b0b0;
+            word-break: break-all;
+        }
+
+        .image-preview {
+            width: 100%;
+            max-height: 300px;
+            object-fit: contain;
+            border-radius: 8px;
+            margin-top: 20px;
+            display: none;
+            border: 2px solid #393e46;
+        }
+
+        .image-preview.show {
+            display: block;
+        }
+
+        .controls {
+            margin-top: 25px;
+        }
+
+        .url-input {
+            width: 100%;
+            padding: 12px 15px;
+            background: #2a2a3e;
+            border: 1px solid #393e46;
+            border-radius: 8px;
+            color: #e6e6e6;
+            font-size: 1rem;
+            margin-bottom: 15px;
+        }
+
+        .url-input:focus {
+            outline: none;
+            border-color: #00adb5;
+        }
+
+        .btn {
+            padding: 12px 25px;
+            background: #00adb5;
+            color: white;
+            border: none;
+            border-radius: 8px;
+            font-size: 1rem;
+            font-weight: 600;
+            cursor: pointer;
+            transition: all 0.3s ease;
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            gap: 8px;
+        }
+
+        .btn:hover {
+            background: #0097a7;
+            transform: translateY(-2px);
+            box-shadow: 0 5px 15px rgba(0, 173, 181, 0.4);
+        }
+
+        .btn:disabled {
+            background: #393e46;
+            cursor: not-allowed;
+            transform: none;
+            box-shadow: none;
+        }
+
+        .btn-primary {
+            width: 100%;
+            margin-top: 10px;
+        }
+
+        .loading {
+            display: none;
+            text-align: center;
+            margin-top: 20px;
+        }
+
+        .loading.show {
+            display: block;
+        }
+
+        .spinner {
+            border: 4px solid #393e46;
+            border-top: 4px solid #00adb5;
+            border-radius: 50%;
+            width: 40px;
+            height: 40px;
+            animation: spin 1s linear infinite;
+            margin: 0 auto 15px;
+        }
+
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+
+        .result-card {
+            background: #2a2a3e;
+            border-radius: 10px;
+            padding: 20px;
+            margin-bottom: 20px;
+            border-left: 5px solid #393e46;
+            transition: all 0.3s ease;
+        }
+
+        .result-card.nsfw {
+            border-left-color: #ff4757;
+            background: rgba(255, 71, 87, 0.1);
+        }
+
+        .result-card.safe {
+            border-left-color: #2ed573;
+            background: rgba(46, 213, 115, 0.1);
+        }
+
+        .result-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 15px;
+        }
+
+        .result-status {
+            font-size: 1.3rem;
+            font-weight: 700;
+        }
+
+        .result-status.nsfw {
+            color: #ff4757;
+        }
+
+        .result-status.safe {
+            color: #2ed573;
+        }
+
+        .confidence {
+            font-size: 1.1rem;
+            font-weight: 600;
+            color: #00adb5;
+        }
+
+        .result-details {
+            margin-top: 15px;
+        }
+
+        .detail-item {
+            margin-bottom: 12px;
+            padding-bottom: 12px;
+            border-bottom: 1px solid #393e46;
+        }
+
+        .detail-label {
+            font-weight: 600;
+            color: #b0b0b0;
+            margin-bottom: 5px;
+        }
+
+        .detail-value {
+            color: #e6e6e6;
+            word-break: break-word;
+        }
+
+        .model-output {
+            background: #1a1a2e;
+            border-radius: 8px;
+            padding: 15px;
+            margin-top: 10px;
+            overflow-x: auto;
+        }
+
+        .json-key {
+            color: #00adb5;
+        }
+
+        .json-string {
+            color: #2ed573;
+        }
+
+        .json-number {
+            color: #ffa502;
+        }
+
+        .json-boolean {
+            color: #ff4757;
+        }
+
+        .yolo-info {
+            background: rgba(255, 165, 2, 0.1);
+            border-left: 5px solid #ffa502;
+            padding: 15px;
+            border-radius: 8px;
+            margin-top: 15px;
+        }
+
+        .yolo-title {
+            color: #ffa502;
+            font-weight: 600;
+            margin-bottom: 10px;
+        }
+
+        .error-card {
+            background: rgba(255, 71, 87, 0.1);
+            border-left: 5px solid #ff4757;
+            padding: 20px;
+            border-radius: 10px;
+            margin-bottom: 20px;
+        }
+
+        .error-title {
+            color: #ff4757;
+            font-weight: 700;
+            margin-bottom: 10px;
+        }
+
+        .empty-state {
+            text-align: center;
+            padding: 40px 20px;
+            color: #b0b0b0;
+        }
+
+        .empty-icon {
+            font-size: 3rem;
+            color: #393e46;
+            margin-bottom: 15px;
+        }
+
+        footer {
+            text-align: center;
+            margin-top: 40px;
+            padding-top: 20px;
+            border-top: 1px solid #393e46;
+            color: #b0b0b0;
+            font-size: 0.9rem;
+        }
+
+        .timestamp {
+            font-size: 0.8rem;
+            color: #777;
+            margin-top: 5px;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <header>
+            <h1>NSFW Detection Debug UI</h1>
+            <p class="subtitle">Test the NSFW detection API with image upload and visualize results</p>
+        </header>
+
+        <div class="main-content">
+            <!-- Upload Section -->
+            <div class="upload-section">
+                <h2 class="section-title">Upload Image</h2>
+
+                <div class="upload-area" id="uploadArea">
+                    <div class="upload-icon">📁</div>
+                    <div class="upload-text">Click to select an image or drag and drop</div>
+                    <div class="file-name" id="fileName">No file selected</div>
+                    <input type="file" id="fileInput" class="file-input" accept="image/*">
+                </div>
+
+                <img id="imagePreview" class="image-preview" alt="Image preview">
+
+                <div class="controls">
+                    <input type="text" id="apiUrl" class="url-input"
+                           placeholder="Enter API URL (default: http://localhost:8082/api/nsfw/detect)"
+                           value="http://localhost:8082/api/nsfw/detect">
+
+                    <button id="detectBtn" class="btn btn-primary">
+                        <span class="btn-icon">🔍</span>
+                        <span class="btn-text">Detect NSFW Content</span>
+                    </button>
+
+                    <div class="loading" id="loading">
+                        <div class="spinner"></div>
+                        <p>Processing image and detecting NSFW content...</p>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Results Section -->
+            <div class="results-section">
+                <h2 class="section-title">Detection Results</h2>
+
+                <div id="resultsContainer">
+                    <div class="empty-state">
+                        <div class="empty-icon">📊</div>
+                        <p>Upload an image and click "Detect NSFW Content" to see results</p>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <footer>
+            <p>NSFW Detection Debug UI | Backend API: /api/nsfw/detect</p>
+            <p>Supports JPEG, PNG, GIF, BMP, WebP images</p>
+            <div id="lastUpdate" class="timestamp"></div>
+        </footer>
+    </div>
+
+    <script>
+        // DOM Elements
+        const fileInput = document.getElementById('fileInput');
+        const uploadArea = document.getElementById('uploadArea');
+        const fileName = document.getElementById('fileName');
+        const imagePreview = document.getElementById('imagePreview');
+        const apiUrlInput = document.getElementById('apiUrl');
+        const detectBtn = document.getElementById('detectBtn');
+        const loading = document.getElementById('loading');
+        const resultsContainer = document.getElementById('resultsContainer');
+        const lastUpdate = document.getElementById('lastUpdate');
+
+        // Current file
+        let currentFile = null;
+
+        // 图片预览缩放状态
+        let currentScale = 1;
+        let translateX = 0, translateY = 0;
+        const SCALE_STEP = 0.2;
+        const MIN_SCALE = 0.1;
+        const MAX_SCALE = 5;
+
+        // 图片拖拽状态
+        let isDragging = false;
+        let startX = 0, startY = 0;
+        let startTranslateX = 0, startTranslateY = 0;
+
+        // 事件处理器引用（用于移除）
+        let handleEscapeKey = null;
+        let handleMouseMove = null;
+        let handleMouseUp = null;
+        let handleTouchMove = null;
+        let handleTouchEnd = null;
+
+        // Event Listeners
+        uploadArea.addEventListener('click', () => fileInput.click());
+
+        uploadArea.addEventListener('dragover', (e) => {
+            e.preventDefault();
+            uploadArea.classList.add('drag-over');
+        });
+
+        uploadArea.addEventListener('dragleave', () => {
+            uploadArea.classList.remove('drag-over');
+        });
+
+        uploadArea.addEventListener('drop', (e) => {
+            e.preventDefault();
+            uploadArea.classList.remove('drag-over');
+
+            if (e.dataTransfer.files.length) {
+                fileInput.files = e.dataTransfer.files;
+                handleFileSelect();
+            }
+        });
+
+        fileInput.addEventListener('change', handleFileSelect);
+
+        detectBtn.addEventListener('click', handleDetection);
+
+        // Functions
+        function handleFileSelect() {
+            const file = fileInput.files[0];
+            if (!file) return;
+
+            currentFile = file;
+            fileName.textContent = file.name;
+
+            // Preview image
+            const reader = new FileReader();
+            reader.onload = (e) => {
+                imagePreview.src = e.target.result;
+                imagePreview.classList.add('show');
+            };
+            reader.readAsDataURL(file);
+
+            // Clear previous results
+            clearResults();
+        }
+
+        function handleDetection() {
+            if (!currentFile) {
+                alert('Please select an image file first.');
+                return;
+            }
+
+            const apiUrl = apiUrlInput.value.trim();
+            if (!apiUrl) {
+                alert('Please enter a valid API URL.');
+                return;
+            }
+
+            // Show loading state
+            detectBtn.disabled = true;
+            loading.classList.add('show');
+
+            // Prepare form data
+            const formData = new FormData();
+            formData.append('image', currentFile);
+
+            // Send request
+            fetch(apiUrl, {
+                method: 'POST',
+                body: formData
+            })
+            .then(response => {
+                if (!response.ok) {
+                    throw new Error(`HTTP error! Status: ${response.status}`);
+                }
+                return response.json();
+            })
+            .then(data => {
+                displayResults(data);
+                updateTimestamp();
+            })
+            .catch(error => {
+                displayError(error);
+            })
+            .finally(() => {
+                detectBtn.disabled = false;
+                loading.classList.remove('show');
+            });
+        }
+
+        function displayResults(data) {
+            // Clear container
+            resultsContainer.innerHTML = '';
+
+            // Check for error response
+            if (data.error) {
+                displayError(data.error);
+                return;
+            }
+
+            // Create result card
+            const card = document.createElement('div');
+            card.className = `result-card ${data.isNsfw ? 'nsfw' : 'safe'}`;
+
+            // Format confidence as percentage
+            const confidencePercent = data.confidence ? (data.confidence * 100).toFixed(2) : 'N/A';
+
+            // Parse model output if available
+            let modelOutputHtml = '<em>No model output available</em>';
+            if (data.modelOutput) {
+                try {
+                    const modelArray = JSON.parse(data.modelOutput);
+                    modelOutputHtml = formatModelOutput(modelArray);
+                } catch (e) {
+                    modelOutputHtml = `<pre>${data.modelOutput}</pre>`;
+                }
+            }
+
+            // Build card content
+            card.innerHTML = `
+                <div class="result-header">
+                    <div class="result-status ${data.isNsfw ? 'nsfw' : 'safe'}">
+                        ${data.isNsfw ? '🚨 NSFW DETECTED' : '✅ SAFE CONTENT'}
+                    </div>
+                    <div class="confidence">Confidence: ${confidencePercent}%</div>
+                </div>
+
+                <div class="result-details">
+                    <div class="detail-item">
+                        <div class="detail-label">Overall Result</div>
+                        <div class="detail-value">${data.isNsfw ? 'Not Safe For Work content detected' : 'Safe For Work content'}</div>
+                    </div>
+
+                    <div class="detail-item">
+                        <div class="detail-label">Confidence Score</div>
+                        <div class="detail-value">${data.confidence ? data.confidence.toFixed(4) : 'N/A'}</div>
+                    </div>
+
+                    <div class="detail-item">
+                        <div class="detail-label">Model Output</div>
+                        <div class="model-output">${modelOutputHtml}</div>
+                    </div>
+                </div>
+            `;
+
+            // Add YOLO info if triggered (using structured yoloResult)
+            if (data.yoloResult) {
+                const yoloDiv = document.createElement('div');
+                yoloDiv.className = 'yolo-info';
+
+                let yoloContent = `
+                    <div class="yolo-title">YOLOv8n Detection Layer</div>
+                    <div class="detail-item">
+                        <div class="detail-label">YOLO Triggered</div>
+                        <div class="detail-value">${data.yoloResult.triggered ? 'Yes' : 'No'}</div>
+                    </div>
+                    <div class="detail-item">
+                        <div class="detail-label">Objects Detected</div>
+                        <div class="detail-value">${data.yoloResult.detectedObjects ? 'Yes' : 'No'}</div>
+                    </div>
+                `;
+
+                if (data.yoloResult.unionBox) {
+                    yoloContent += `
+                        <div class="detail-item">
+                            <div class="detail-label">Union Box (normalized)</div>
+                            <div class="detail-value">${data.yoloResult.unionBox}</div>
+                        </div>
+                    `;
+                }
+
+                if (data.yoloResult.backendIsNsfw !== undefined) {
+                    yoloContent += `
+                        <div class="detail-item">
+                            <div class="detail-label">YOLO Backend Result</div>
+                            <div class="detail-value">${data.yoloResult.backendIsNsfw ? 'NSFW' : 'Safe'}</div>
+                        </div>
+                    `;
+                }
+
+                if (data.yoloResult.backendConfidence !== undefined) {
+                    yoloContent += `
+                        <div class="detail-item">
+                            <div class="detail-label">YOLO Backend Confidence</div>
+                            <div class="detail-value">${(data.yoloResult.backendConfidence * 100).toFixed(2)}%</div>
+                        </div>
+                    `;
+                }
+
+                yoloDiv.innerHTML = yoloContent;
+                card.appendChild(yoloDiv);
+            }
+
+            // Display debug images if available
+            if (data.debugImages && Object.keys(data.debugImages).length > 0) {
+                const debugDiv = document.createElement('div');
+                debugDiv.className = 'debug-images';
+                debugDiv.style.marginTop = '20px';
+                debugDiv.style.padding = '15px';
+                debugDiv.style.background = 'rgba(0, 173, 181, 0.1)';
+                debugDiv.style.borderLeft = '5px solid #00adb5';
+                debugDiv.style.borderRadius = '8px';
+
+                debugDiv.innerHTML = '<div class="yolo-title">调试图片</div>';
+
+                for (const [key, debugImage] of Object.entries(data.debugImages)) {
+                    const imgContainer = document.createElement('div');
+                    imgContainer.style.marginBottom = '20px';
+                    imgContainer.style.paddingBottom = '15px';
+                    imgContainer.style.borderBottom = '1px solid #393e46';
+
+                    const imgTitle = document.createElement('div');
+                    imgTitle.style.fontWeight = '600';
+                    imgTitle.style.color = '#00adb5';
+                    imgTitle.style.marginBottom = '5px';
+                    // 使用简洁中文说明
+                    let displayName = key;
+                    if (key === 'yolo_detections') displayName = 'yolo检测框调试';
+                    else if (key === 'yoloHitImage') displayName = 'yolo命中区域送检图片';
+                    imgTitle.textContent = displayName;
+
+                    const imgInfo = document.createElement('div');
+                    imgInfo.style.fontSize = '0.9rem';
+                    imgInfo.style.color = '#b0b0b0';
+                    imgInfo.style.marginBottom = '10px';
+                    imgInfo.textContent = `尺寸: ${debugImage.width}x${debugImage.height}, 格式: ${debugImage.format || 'jpg'}`;
+
+                    const imgElement = document.createElement('img');
+                    imgElement.src = `data:image/${debugImage.format || 'jpg'};base64,${debugImage.base64}`;
+                    imgElement.style.maxWidth = '100%';
+                    imgElement.style.maxHeight = '300px';
+                    imgElement.style.objectFit = 'contain';
+                    imgElement.style.borderRadius = '5px';
+                    imgElement.style.border = '2px solid #393e46';
+                    imgElement.alt = displayName;
+
+                    // 为yolo_detections图片添加预览功能
+                    if (key === 'yolo_detections') {
+                        imgElement.setAttribute('data-is-yolo-detection', 'true');
+                    }
+
+                    imgContainer.appendChild(imgTitle);
+                    imgContainer.appendChild(imgInfo);
+                    imgContainer.appendChild(imgElement);
+                    debugDiv.appendChild(imgContainer);
+                }
+
+                // 初始化图片预览功能
+                setTimeout(() => setupImagePreview(), 100);
+
+                card.appendChild(debugDiv);
+            }
+
+            resultsContainer.appendChild(card);
+        }
+
+        function formatModelOutput(modelArray) {
+            if (!Array.isArray(modelArray)) {
+                return `<pre>${JSON.stringify(modelArray, null, 2)}</pre>`;
+            }
+
+            let html = '<div class="model-output-list">';
+
+            modelArray.forEach((model, index) => {
+                html += `
+                    <div class="model-item" style="margin-bottom: 15px; padding-bottom: 15px; border-bottom: 1px solid #393e46;">
+                        <div style="font-weight: 600; color: #00adb5; margin-bottom: 5px;">
+                            ${model.model || `Model ${index + 1}`}
+                        </div>
+                        <div style="display: grid; grid-template-columns: repeat(2, 1fr); gap: 10px;">
+                            <div>
+                                <span style="color: #b0b0b0;">Result:</span>
+                                <span style="color: ${model.isNsfw ? '#ff4757' : '#2ed573'}; font-weight: 600;">
+                                    ${model.isNsfw ? 'NSFW' : 'Safe'}
+                                </span>
+                            </div>
+                            <div>
+                                <span style="color: #b0b0b0;">Confidence:</span>
+                                <span style="color: #ffa502; font-weight: 600;">
+                                    ${(model.confidence * 100).toFixed(2)}%
+                                </span>
+                            </div>
+                            <div>
+                                <span style="color: #b0b0b0;">Threshold:</span>
+                                <span style="color: #00adb5;">
+                                    ${model.threshold}
+                                </span>
+                            </div>
+                        </div>
+                    </div>
+                `;
+            });
+
+            html += '</div>';
+            return html;
+        }
+
+        // 图片预览功能
+        function setupImagePreview() {
+            // 为yolo_detections图片添加点击预览功能
+            document.querySelectorAll('img[data-is-yolo-detection]').forEach(img => {
+                img.style.cursor = 'pointer';
+                img.addEventListener('click', function() {
+                    openImagePreview(this.src, this.alt || 'YOLO检测框调试图片');
+                });
+            });
+        }
+
+        // 图片预览缩放功能
+
+        // 打开图片预览模态框
+        function openImagePreview(src, title) {
+            const modal = document.getElementById('imagePreviewModal');
+            const modalImg = document.getElementById('previewImage');
+            const modalTitle = document.getElementById('previewTitle');
+
+            modalImg.src = src;
+            modalTitle.textContent = title;
+            modal.style.display = 'flex';
+
+            // 重置缩放和位置
+            currentScale = 1;
+            translateX = 0;
+            translateY = 0;
+            updateImageTransform();
+
+            // 添加事件监听
+            setupZoomControls(modalImg);
+            setupDragHandlers(modalImg);
+
+            // 点击模态框背景关闭
+            modal.addEventListener('click', function(e) {
+                if (e.target === this || e.target.classList.contains('close-btn')) {
+                    closeImagePreview();
+                }
+            });
+
+            // ESC键关闭
+            handleEscapeKey = function(e) {
+                if (e.key === 'Escape') {
+                    closeImagePreview();
+                }
+            };
+            document.addEventListener('keydown', handleEscapeKey);
+        }
+
+        // 设置缩放控件
+        function setupZoomControls(imgElement) {
+            const zoomInBtn = document.getElementById('zoomInBtn');
+            const zoomOutBtn = document.getElementById('zoomOutBtn');
+            const resetZoomBtn = document.getElementById('resetZoomBtn');
+            const fitToScreenBtn = document.getElementById('fitToScreenBtn');
+
+            // 移除旧的事件监听器
+            zoomInBtn.replaceWith(zoomInBtn.cloneNode(true));
+            zoomOutBtn.replaceWith(zoomOutBtn.cloneNode(true));
+            resetZoomBtn.replaceWith(resetZoomBtn.cloneNode(true));
+            fitToScreenBtn.replaceWith(fitToScreenBtn.cloneNode(true));
+
+            // 重新获取元素
+            const newZoomInBtn = document.getElementById('zoomInBtn');
+            const newZoomOutBtn = document.getElementById('zoomOutBtn');
+            const newResetZoomBtn = document.getElementById('resetZoomBtn');
+            const newFitToScreenBtn = document.getElementById('fitToScreenBtn');
+
+            // 放大
+            newZoomInBtn.addEventListener('click', () => {
+                currentScale = Math.min(MAX_SCALE, currentScale + SCALE_STEP);
+                updateImageTransform();
+            });
+
+            // 缩小
+            newZoomOutBtn.addEventListener('click', () => {
+                currentScale = Math.max(MIN_SCALE, currentScale - SCALE_STEP);
+                updateImageTransform();
+            });
+
+            // 重置缩放
+            newResetZoomBtn.addEventListener('click', () => {
+                currentScale = 1;
+                translateX = 0;
+                translateY = 0;
+                updateImageTransform();
+            });
+
+            // 适应屏幕
+            newFitToScreenBtn.addEventListener('click', () => {
+                fitImageToScreen(imgElement);
+            });
+
+            // 鼠标滚轮缩放
+            imgElement.parentElement.addEventListener('wheel', function(e) {
+                e.preventDefault();
+                const rect = imgElement.getBoundingClientRect();
+                const mouseX = e.clientX - rect.left;
+                const mouseY = e.clientY - rect.top;
+
+                const oldScale = currentScale;
+                if (e.deltaY < 0) {
+                    currentScale = Math.min(MAX_SCALE, currentScale + SCALE_STEP);
+                } else {
+                    currentScale = Math.max(MIN_SCALE, currentScale - SCALE_STEP);
+                }
+
+                // 以鼠标位置为中心缩放
+                const scaleChange = currentScale / oldScale;
+                translateX = mouseX - (mouseX - translateX) * scaleChange;
+                translateY = mouseY - (mouseY - translateY) * scaleChange;
+
+                updateImageTransform();
+            }, { passive: false });
+        }
+
+        // 设置拖动手柄
+        function setupDragHandlers(imgElement) {
+            // 使用全局的拖拽状态变量
+
+            // 鼠标按下事件
+            imgElement.addEventListener('mousedown', function(e) {
+                isDragging = true;
+                startX = e.clientX;
+                startY = e.clientY;
+                startTranslateX = translateX;
+                startTranslateY = translateY;
+                imgElement.style.cursor = 'grabbing';
+                e.preventDefault();
+            });
+
+            // 鼠标移动事件
+            handleMouseMove = function(e) {
+                if (isDragging) {
+                    const dx = e.clientX - startX;
+                    const dy = e.clientY - startY;
+                    translateX = startTranslateX + dx;
+                    translateY = startTranslateY + dy;
+                    updateImageTransform();
+                }
+            };
+            document.addEventListener('mousemove', handleMouseMove);
+
+            // 鼠标抬起事件
+            handleMouseUp = function() {
+                isDragging = false;
+                const modalImg = document.getElementById('previewImage');
+                if (modalImg) {
+                    modalImg.style.cursor = 'grab';
+                }
+            };
+            document.addEventListener('mouseup', handleMouseUp);
+
+            // 触摸屏支持 - 触摸开始
+            imgElement.addEventListener('touchstart', function(e) {
+                if (e.touches.length === 1) {
+                    isDragging = true;
+                    startX = e.touches[0].clientX;
+                    startY = e.touches[0].clientY;
+                    startTranslateX = translateX;
+                    startTranslateY = translateY;
+                    e.preventDefault();
+                }
+            });
+
+            // 触摸移动
+            handleTouchMove = function(e) {
+                if (isDragging && e.touches.length === 1) {
+                    const dx = e.touches[0].clientX - startX;
+                    const dy = e.touches[0].clientY - startY;
+                    translateX = startTranslateX + dx;
+                    translateY = startTranslateY + dy;
+                    updateImageTransform();
+                    e.preventDefault();
+                }
+            };
+            document.addEventListener('touchmove', handleTouchMove, { passive: false });
+
+            // 触摸结束
+            handleTouchEnd = function() {
+                isDragging = false;
+            };
+            document.addEventListener('touchend', handleTouchEnd);
+        }
+
+        // 更新图片变换
+        function updateImageTransform() {
+            const modalImg = document.getElementById('previewImage');
+            modalImg.style.transform = `translate(${translateX}px, ${translateY}px) scale(${currentScale})`;
+
+            // 更新重置按钮文本
+            const resetZoomBtn = document.getElementById('resetZoomBtn');
+            resetZoomBtn.textContent = `${Math.round(currentScale * 100)}%`;
+
+            // 更新光标
+            modalImg.style.cursor = 'grab';
+        }
+
+        // 适应屏幕
+        function fitImageToScreen(imgElement) {
+            const container = imgElement.parentElement;
+            const modalBody = container.parentElement;
+
+            const containerWidth = container.clientWidth;
+            const containerHeight = container.clientHeight;
+
+            // 获取图片原始尺寸
+            const img = new Image();
+            img.onload = function() {
+                const imgWidth = this.width;
+                const imgHeight = this.height;
+
+                // 计算适应屏幕的比例
+                const scaleX = containerWidth / imgWidth;
+                const scaleY = containerHeight / imgHeight;
+                currentScale = Math.min(scaleX, scaleY) * 0.9; // 留一些边距
+
+                // 重置位置
+                translateX = (containerWidth - imgWidth * currentScale) / 2;
+                translateY = (containerHeight - imgHeight * currentScale) / 2;
+
+                updateImageTransform();
+            };
+            img.src = imgElement.src;
+        }
+
+        // 关闭图片预览
+        function closeImagePreview() {
+            const modal = document.getElementById('imagePreviewModal');
+            modal.style.display = 'none';
+
+            // 重置拖拽状态
+            isDragging = false;
+
+            // 移除全局事件监听器
+            document.removeEventListener('keydown', handleEscapeKey);
+            document.removeEventListener('mousemove', handleMouseMove);
+            document.removeEventListener('mouseup', handleMouseUp);
+            document.removeEventListener('touchmove', handleTouchMove);
+            document.removeEventListener('touchend', handleTouchEnd);
+        }
+
+
+        function displayError(error) {
+            resultsContainer.innerHTML = '';
+
+            const errorCard = document.createElement('div');
+            errorCard.className = 'error-card';
+
+            const errorMessage = typeof error === 'string' ? error :
+                (error.message || 'Unknown error occurred');
+
+            errorCard.innerHTML = `
+                <div class="error-title">⚠️ Error Detected</div>
+                <div class="detail-value">${errorMessage}</div>
+            `;
+
+            resultsContainer.appendChild(errorCard);
+            updateTimestamp();
+        }
+
+        function clearResults() {
+            resultsContainer.innerHTML = `
+                <div class="empty-state">
+                    <div class="empty-icon">📊</div>
+                    <p>Upload an image and click "Detect NSFW Content" to see results</p>
+                </div>
+            `;
+        }
+
+        function updateTimestamp() {
+            const now = new Date();
+            lastUpdate.textContent = `Last updated: ${now.toLocaleString()}`;
+        }
+
+        // Initialize timestamp
+        updateTimestamp();
+    </script>
+
+    <!-- 图片预览模态框 -->
+    <div id="imagePreviewModal" class="image-modal">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h3 id="previewTitle">图片预览</h3>
+                <div class="zoom-controls">
+                    <button class="zoom-btn" id="zoomOutBtn" title="缩小">-</button>
+                    <button class="zoom-btn" id="resetZoomBtn" title="重置缩放">100%</button>
+                    <button class="zoom-btn" id="zoomInBtn" title="放大">+</button>
+                    <button class="zoom-btn" id="fitToScreenBtn" title="适应屏幕">适应屏幕</button>
+                </div>
+                <button class="close-btn">&times;</button>
+            </div>
+            <div class="modal-body">
+                <div class="image-container">
+                    <img id="previewImage" alt="预览图片">
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <style>
+        /* 图片预览模态框样式 */
+        .image-modal {
+            display: none;
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background: rgba(0, 0, 0, 0.85);
+            z-index: 1000;
+            justify-content: center;
+            align-items: center;
+            padding: 20px;
+        }
+
+        .modal-content {
+            background: #1e1e2e;
+            border-radius: 12px;
+            max-width: 90%;
+            max-height: 90%;
+            display: flex;
+            flex-direction: column;
+            border: 1px solid #00adb5;
+            box-shadow: 0 0 30px rgba(0, 173, 181, 0.3);
+        }
+
+        .modal-header {
+            padding: 15px 20px;
+            border-bottom: 1px solid #393e46;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+
+        .modal-header h3 {
+            color: #00adb5;
+            margin: 0;
+            font-size: 1.2rem;
+        }
+
+        .close-btn {
+            background: none;
+            border: none;
+            color: #b0b0b0;
+            font-size: 1.8rem;
+            cursor: pointer;
+            line-height: 1;
+            padding: 0;
+            width: 30px;
+            height: 30px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            border-radius: 4px;
+            transition: all 0.2s;
+        }
+
+        .close-btn:hover {
+            color: #ff4757;
+            background: rgba(255, 71, 87, 0.1);
+        }
+
+        .modal-body {
+            padding: 20px;
+            overflow: auto;
+            flex: 1;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+        }
+
+        #previewImage {
+            max-width: 100%;
+            max-height: calc(90vh - 100px);
+            object-fit: contain;
+            border-radius: 8px;
+            border: 2px solid #393e46;
+        }
+
+        /* 图片可点击样式 */
+        img[data-is-yolo-detection] {
+            transition: transform 0.2s, box-shadow 0.2s;
+        }
+
+        img[data-is-yolo-detection]:hover {
+            transform: scale(1.02);
+            box-shadow: 0 5px 15px rgba(0, 173, 181, 0.3);
+        }
+
+        /* 缩放控件样式 */
+        .zoom-controls {
+            display: flex;
+            gap: 8px;
+            margin-right: 15px;
+        }
+
+        .zoom-btn {
+            background: #2a2a3e;
+            border: 1px solid #393e46;
+            color: #e6e6e6;
+            border-radius: 4px;
+            padding: 6px 12px;
+            font-size: 0.9rem;
+            cursor: pointer;
+            transition: all 0.2s;
+            min-width: 40px;
+            text-align: center;
+        }
+
+        .zoom-btn:hover {
+            background: #393e46;
+            border-color: #00adb5;
+            color: #00adb5;
+        }
+
+        .zoom-btn:active {
+            transform: scale(0.95);
+        }
+
+        /* 图片容器样式 */
+        .image-container {
+            width: 100%;
+            height: 100%;
+            overflow: auto;
+            position: relative;
+        }
+
+        #previewImage {
+            max-width: none;
+            max-height: none;
+            object-fit: contain;
+            border-radius: 8px;
+            border: 2px solid #393e46;
+            transition: transform 0.1s;
+            transform-origin: 0 0;
+            cursor: grab;
+        }
+
+        #previewImage:active {
+            cursor: grabbing;
+        }
+
+        /* 模态框body调整 */
+        .modal-body {
+            padding: 20px;
+            overflow: hidden; /* 容器本身不滚动，由内部容器滚动 */
+            flex: 1;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            min-height: 300px;
+        }
+    </style>
+</body>
+</html>

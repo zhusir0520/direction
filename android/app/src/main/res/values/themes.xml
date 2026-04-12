@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <style name="Theme.Direction" parent="android:Theme.Material.Light.NoActionBar"/>
+
+    <!-- 透明主题用于权限请求活动 -->
+    <style name="Theme.Direction.Transparent" parent="Theme.Direction">
+        <item name="android:windowIsTranslucent">true</item>
+        <item name="android:windowBackground">@android:color/transparent</item>
+        <item name="android:windowContentOverlay">@null</item>
+        <item name="android:windowNoTitle">true</item>
+        <item name="android:backgroundDimEnabled">true</item>
+    </style>
+</resources>
