@@ -10,7 +10,6 @@ import androidx.activity.compose.setContent
 import androidx.compose.foundation.*
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.rememberScrollState
@@ -20,6 +19,8 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.clickable
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.ArrowBack
+import androidx.compose.material.icons.filled.Check
+import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.ExpandLess
 import androidx.compose.material.icons.filled.ExpandMore
@@ -43,23 +44,20 @@ import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
 import com.example.direction.model.DetectionResult
 import com.example.direction.repository.DetectionRepository
-import com.example.direction.ui.FullScreenImageViewer
-import com.example.direction.ui.HistoryDetectionDetailDialog
 import com.example.direction.ui.theme.DirectionTheme
 import com.example.direction.utils.LogUtils
 import com.google.accompanist.swiperefresh.SwipeRefresh
 import com.google.accompanist.swiperefresh.rememberSwipeRefreshState
 import androidx.compose.foundation.interaction.MutableInteractionSource
-import androidx.compose.foundation.interaction.collectIsPressedAsState
 import android.util.Log
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import androidx.compose.ui.state.ToggleableState
 import java.text.SimpleDateFormat
 import java.util.*
-import com.google.gson.Gson
 
 /**
  * 历史记录页面
@@ -127,7 +125,6 @@ fun HistoryScreen(
 ) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
-    val scrollState = rememberScrollState()
 
     // 状态
     val history = remember { mutableStateListOf<DetectionResult>() }
@@ -135,6 +132,12 @@ fun HistoryScreen(
     var showDeleteConfirm by remember { mutableStateOf(false) }
     var resultToDelete by remember { mutableStateOf<DetectionResult?>(null) }
     var isRefreshing by remember { mutableStateOf(false) } // 防重入标志
+    // 批量选择状态
+    var isEditMode by remember { mutableStateOf(false) }
+    val selectedResults = remember { mutableStateListOf<DetectionResult>() }
+    var showBatchDeleteConfirm by remember { mutableStateOf(false) }
+    // 折叠状态：记录已折叠的日期字符串
+    val collapsedDates = remember { mutableStateListOf<String>() }
 
     // 下拉刷新状态
     val swipeRefreshState = rememberSwipeRefreshState(isRefreshing = isLoading || isRefreshing)
@@ -157,6 +160,13 @@ fun HistoryScreen(
         }
     }
 
+    // 退出编辑模式
+    fun exitEditMode() {
+        isEditMode = false
+        selectedResults.clear()
+        collapsedDates.clear()
+    }
+
     // 初始加载历史记录
     LaunchedEffect(Unit) {
         loadHistory()
@@ -172,29 +182,65 @@ fun HistoryScreen(
         Column(
             modifier = Modifier
                 .fillMaxSize()
-                .padding(16.dp),
-            horizontalAlignment = Alignment.CenterHorizontally,
-            verticalArrangement = Arrangement.spacedBy(16.dp)
+                .padding(horizontal = 16.dp)
+                .windowInsetsPadding(WindowInsets.statusBars),
+            horizontalAlignment = Alignment.CenterHorizontally
         ) {
             // 顶部标题栏
             Row(
-                modifier = Modifier.fillMaxWidth(),
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.SpaceBetween
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(top = 8.dp, bottom = 4.dp),
+                verticalAlignment = Alignment.CenterVertically
             ) {
-                IconButton(onClick = onBack) {
-                    Icon(Icons.Default.ArrowBack, contentDescription = "返回")
+                IconButton(onClick = {
+                    if (isEditMode) exitEditMode() else onBack()
+                }) {
+                    Icon(
+                        if (isEditMode) Icons.Default.Close else Icons.Default.ArrowBack,
+                        contentDescription = if (isEditMode) "取消选择" else "返回"
+                    )
                 }
                 Text(
-                    text = "历史记录",
-                    fontSize = 24.sp,
+                    text = if (isEditMode) "已选 ${selectedResults.size} 项" else "历史记录",
+                    fontSize = 20.sp,
                     fontWeight = FontWeight.Bold,
-                    modifier = Modifier.weight(1f).padding(start = 16.dp)
+                    modifier = Modifier.weight(1f)
                 )
-                Spacer(modifier = Modifier.width(48.dp)) // 平衡布局
+                if (isEditMode) {
+                    // 编辑模式：删除选中按钮
+                    if (selectedResults.isNotEmpty()) {
+                        IconButton(
+                            onClick = { showBatchDeleteConfirm = true }
+                        ) {
+                            Icon(
+                                Icons.Default.Delete,
+                                contentDescription = "批量删除",
+                                tint = MaterialTheme.colorScheme.error
+                            )
+                        }
+                    } else {
+                        Spacer(modifier = Modifier.size(48.dp))
+                    }
+                } else {
+                    // 普通模式：进入选择模式按钮
+                    IconButton(onClick = {
+                        isEditMode = true
+                        // 进入编辑模式时默认全部折叠
+                        val grouped = history.groupBy { result ->
+                            SimpleDateFormat("yyyy-MM-dd", Locale.getDefault())
+                                .format(Date(result.timestamp))
+                        }
+                        collapsedDates.clear()
+                        collapsedDates.addAll(grouped.keys)
+                    }) {
+                        Icon(
+                            Icons.Default.Check,
+                            contentDescription = "选择"
+                        )
+                    }
+                }
             }
-
-            Spacer(modifier = Modifier.height(8.dp))
 
             // 加载状态
             if (isLoading) {
@@ -241,22 +287,78 @@ fun HistoryScreen(
                     }
 
                     grouped.forEach { (date, results) ->
-                        item {
-                            Text(
-                                text = date,
-                                fontWeight = FontWeight.Medium,
-                                fontSize = 16.sp,
-                                modifier = Modifier.padding(vertical = 8.dp, horizontal = 8.dp)
-                            )
+                        val isCollapsed = collapsedDates.contains(date)
+                        val allSelected = results.all { selectedResults.contains(it) }
+
+                        item(key = "date_$date") {
+                            Row(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .clickable(
+                                        interactionSource = remember { MutableInteractionSource() },
+                                        indication = null
+                                    ) {
+                                        if (isCollapsed) collapsedDates.remove(date)
+                                        else collapsedDates.add(date)
+                                    }
+                                    .padding(vertical = 4.dp, horizontal = 4.dp),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                // 展开/折叠指示器
+                                Text(
+                                    text = if (isCollapsed) "▶" else "▼",
+                                    fontSize = 12.sp,
+                                    color = Color.Gray,
+                                    modifier = Modifier.padding(end = 4.dp)
+                                )
+                                Text(
+                                    text = date,
+                                    fontWeight = FontWeight.Medium,
+                                    fontSize = 16.sp,
+                                    modifier = Modifier.weight(1f)
+                                )
+                                if (isEditMode) {
+                                    val triState = when {
+                                        allSelected -> ToggleableState.On
+                                        results.any { selectedResults.contains(it) } -> ToggleableState.Indeterminate
+                                        else -> ToggleableState.Off
+                                    }
+                                    TriStateCheckbox(
+                                        state = triState,
+                                        onClick = {
+                                            if (allSelected) {
+                                                for (r in results) selectedResults.remove(r)
+                                            } else {
+                                                for (r in results) {
+                                                    if (!selectedResults.contains(r)) selectedResults.add(r)
+                                                }
+                                            }
+                                        }
+                                    )
+                                }
+                            }
                         }
 
-                        items(results) { result ->
+                        // 未折叠时才显示该日期的记录
+                        val displayResults = if (isCollapsed) emptyList() else results
+                        items(displayResults, key = { it.timestamp }) { result ->
                             HistoryRecordItem(
                                 result = result,
                                 detectionRepository = detectionRepository,
+                                isEditMode = isEditMode,
+                                isSelected = selectedResults.contains(result),
                                 onClick = {
-                                    Log.d("HistoryActivity", "选择记录: ${result.timestamp}")
-                                    onOpenDetail(result)
+                                    if (isEditMode) {
+                                        // 编辑模式：切换选中状态
+                                        if (selectedResults.contains(result)) {
+                                            selectedResults.remove(result)
+                                        } else {
+                                            selectedResults.add(result)
+                                        }
+                                    } else {
+                                        Log.d("HistoryActivity", "选择记录: ${result.timestamp}")
+                                        onOpenDetail(result)
+                                    }
                                 },
                                 onDelete = {
                                     resultToDelete = result
@@ -270,8 +372,7 @@ fun HistoryScreen(
         }
     }
 
-
-    // 删除确认对话框
+    // 单条删除确认对话框
     if (showDeleteConfirm && resultToDelete != null) {
         AlertDialog(
             onDismissRequest = { showDeleteConfirm = false },
@@ -280,17 +381,18 @@ fun HistoryScreen(
             confirmButton = {
                 TextButton(
                     onClick = {
-                        scope.launch {
-                            val success = detectionRepository.deleteResult(resultToDelete!!)
-                            if (success) {
-                                Toast.makeText(context, "记录已删除", Toast.LENGTH_SHORT).show()
-                                // 从列表中移除
-                                history.remove(resultToDelete)
-                            } else {
-                                Toast.makeText(context, "删除失败", Toast.LENGTH_SHORT).show()
+                        val toDelete = resultToDelete!!
+                        // 立即从UI移除（乐观更新）
+                        history.remove(toDelete)
+                        showDeleteConfirm = false
+                        resultToDelete = null
+                        // 后台执行实际删除
+                        scope.launch(Dispatchers.IO) {
+                            val success = detectionRepository.deleteResult(toDelete)
+                            if (!success) {
+                                // 删除失败，重新加载
+                                loadHistory()
                             }
-                            showDeleteConfirm = false
-                            resultToDelete = null
                         }
                     },
                     colors = ButtonDefaults.textButtonColors(
@@ -312,6 +414,44 @@ fun HistoryScreen(
             }
         )
     }
+
+    // 批量删除确认对话框
+    if (showBatchDeleteConfirm && selectedResults.isNotEmpty()) {
+        AlertDialog(
+            onDismissRequest = { showBatchDeleteConfirm = false },
+            title = { Text("批量删除") },
+            text = { Text("确定要删除选中的 ${selectedResults.size} 条检测记录吗？此操作将删除相应的截图文件和检测记录。") },
+            confirmButton = {
+                TextButton(
+                    onClick = {
+                        val toDelete = selectedResults.toList()
+                        // 立即从UI移除（乐观更新）
+                        history.removeAll(toDelete)
+                        exitEditMode()
+                        showBatchDeleteConfirm = false
+                        // 后台执行实际删除
+                        scope.launch(Dispatchers.IO) {
+                            for (result in toDelete) {
+                                detectionRepository.deleteResult(result)
+                            }
+                        }
+                    },
+                    colors = ButtonDefaults.textButtonColors(
+                        contentColor = MaterialTheme.colorScheme.error
+                    )
+                ) {
+                    Text("删除")
+                }
+            },
+            dismissButton = {
+                TextButton(
+                    onClick = { showBatchDeleteConfirm = false }
+                ) {
+                    Text("取消")
+                }
+            }
+        )
+    }
 }
 
 /**
@@ -321,24 +461,24 @@ fun HistoryScreen(
 fun HistoryRecordItem(
     result: DetectionResult,
     detectionRepository: DetectionRepository,
+    isEditMode: Boolean = false,
+    isSelected: Boolean = false,
     onClick: () -> Unit,
     onDelete: () -> Unit
 ) {
-    val coroutineScope = rememberCoroutineScope()
     var screenshotBitmap by remember { mutableStateOf<Bitmap?>(null) }
     var isLoading by remember { mutableStateOf(false) }
 
-    // 异步加载缩略图
-    LaunchedEffect(result, detectionRepository) {
-        if (result.screenshotPath != null && screenshotBitmap == null && !isLoading) {
+    // 每次result变化时重新加载缩略图（修复列表复用导致缩略图错乱的bug）
+    LaunchedEffect(result) {
+        screenshotBitmap = null
+        if (result.screenshotPath != null) {
             isLoading = true
             try {
-                // 使用协程加载缩略图
                 screenshotBitmap = withContext(Dispatchers.IO) {
                     detectionRepository.getScreenshot(result)
                 }
             } catch (e: Exception) {
-                // 忽略加载错误
                 Log.e("HistoryRecordItem", "加载缩略图失败: ${e.message}")
             } finally {
                 isLoading = false
@@ -350,25 +490,57 @@ fun HistoryRecordItem(
         modifier = Modifier
             .fillMaxWidth()
             .clickable(
-                onClick = {
-                    Log.d("HistoryActivity", "点击记录: ${result.timestamp}")
-                    onClick()
-                },
-                indication = null,
+                onClick = onClick,
+                indication = if (isEditMode) null else null,
                 interactionSource = remember { MutableInteractionSource() }
+            )
+            .then(
+                if (isSelected) Modifier.border(
+                    width = 2.dp,
+                    color = MaterialTheme.colorScheme.primary,
+                    shape = RoundedCornerShape(12.dp)
+                ) else Modifier
             ),
         shape = RoundedCornerShape(12.dp),
         colors = CardDefaults.cardColors(
-            containerColor = if (result.isNSFW) Color(0xFFFFCDD2) else Color(0xFFC8E6C9)
+            containerColor = when {
+                isSelected -> MaterialTheme.colorScheme.primaryContainer
+                result.isNSFW -> Color(0xFFFFCDD2)
+                else -> Color(0xFFC8E6C9)
+            }
         )
     ) {
         Row(
             modifier = Modifier.padding(12.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
-            // 缩略图区域
+            // 编辑模式选中态圆圈
+            if (isEditMode) {
+                Box(
+                    modifier = Modifier
+                        .size(24.dp)
+                        .padding(end = 8.dp)
+                        .clip(CircleShape)
+                        .background(
+                            if (isSelected) MaterialTheme.colorScheme.primary
+                            else Color(0xFFE0E0E0)
+                        ),
+                    contentAlignment = Alignment.Center
+                ) {
+                    if (isSelected) {
+                        Icon(
+                            Icons.Default.Check,
+                            contentDescription = "已选中",
+                            tint = Color.White,
+                            modifier = Modifier.size(16.dp)
+                        )
+                    }
+                }
+            }
+
+            // 缩略图区域 - 放大到80dp
             Box(
-                modifier = Modifier.size(60.dp),
+                modifier = Modifier.size(80.dp),
                 contentAlignment = Alignment.Center
             ) {
                 if (screenshotBitmap != null) {
@@ -395,7 +567,7 @@ fun HistoryRecordItem(
                             imageVector = Icons.Default.Image,
                             contentDescription = "无截图",
                             tint = Color.Gray,
-                            modifier = Modifier.size(24.dp)
+                            modifier = Modifier.size(32.dp)
                         )
                     }
                 }
@@ -403,77 +575,63 @@ fun HistoryRecordItem(
 
             Spacer(modifier = Modifier.width(12.dp))
 
-            // 文本信息区域
+            // 文本信息区域（精简）
             Column(
                 modifier = Modifier.weight(1f)
             ) {
-                // 第一行：状态和时间
                 Row(
                     modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.SpaceBetween,
                     verticalAlignment = Alignment.CenterVertically
                 ) {
-                    // 状态标签
-                    Text(
-                        text = if (result.isNSFW) "⚠️ NSFW" else "✅ 安全",
-                        fontSize = 14.sp,
-                        fontWeight = FontWeight.Medium,
-                        color = if (result.isNSFW) Color.Red else Color.Green
-                    )
+                    // 状态标签 + 时间
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text(
+                            text = if (result.isNSFW) "⚠️ NSFW" else "✅ 安全",
+                            fontSize = 16.sp,
+                            fontWeight = FontWeight.Medium,
+                            color = if (result.isNSFW) Color.Red else Color.Green
+                        )
+                        Text(
+                            text = SimpleDateFormat("HH:mm:ss", Locale.getDefault())
+                                .format(Date(result.timestamp)),
+                            fontSize = 12.sp,
+                            color = Color.Gray
+                        )
+                    }
 
-                    // 时间
-                    Text(
-                        text = SimpleDateFormat("HH:mm:ss", Locale.getDefault())
-                            .format(Date(result.timestamp)),
-                        fontSize = 12.sp,
-                        color = Color.Gray
-                    )
+                    // 非编辑模式才显示单个删除按钮
+                    if (!isEditMode) {
+                        IconButton(
+                            onClick = onDelete,
+                            modifier = Modifier.size(24.dp)
+                        ) {
+                            Icon(
+                                Icons.Default.Delete,
+                                contentDescription = "删除",
+                                tint = MaterialTheme.colorScheme.error
+                            )
+                        }
+                    }
                 }
 
                 Spacer(modifier = Modifier.height(4.dp))
 
-                // 第二行：置信度信息
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.SpaceBetween,
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    Column {
-                        Text(
-                            text = "置信度: ${String.format("%.1f%%", result.confidence * 100)}",
-                            fontSize = 13.sp
-                        )
-                        if (result.backendConfidence != null) {
-                            Text(
-                                text = "后端: ${String.format("%.1f%%", result.backendConfidence * 100)}",
-                                fontSize = 13.sp,
-                                color = Color.Gray
-                            )
-                        }
-                    }
-
-                    // 删除按钮
-                    IconButton(
-                        onClick = onDelete,
-                        modifier = Modifier.size(24.dp)
-                    ) {
-                        Icon(
-                            Icons.Default.Delete,
-                            contentDescription = "删除",
-                            tint = MaterialTheme.colorScheme.error
-                        )
-                    }
+                // 置信度：NSFW且由后端检测到时显示后端置信度
+                val displayConfidence = if (result.backendIsNsfw == true && result.backendConfidence != null) {
+                    result.backendConfidence
+                } else {
+                    result.confidence
                 }
-
-                // 后端检测结果（如果有）
-                if (result.backendIsNsfw != null) {
-                    Spacer(modifier = Modifier.height(2.dp))
-                    Text(
-                        text = "后端: ${if (result.backendIsNsfw == true) "NSFW" else "安全"}",
-                        fontSize = 11.sp,
-                        color = Color.Gray
-                    )
+                val confidenceLabel = if (result.backendIsNsfw == true && result.backendConfidence != null) {
+                    "后端置信度"
+                } else {
+                    "置信度"
                 }
+                Text(
+                    text = "$confidenceLabel: ${String.format("%.1f%%", displayConfidence * 100)}",
+                    fontSize = 12.sp,
+                    color = Color.Gray
+                )
             }
         }
     }

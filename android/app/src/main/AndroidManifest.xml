@@ -54,13 +54,6 @@
                 android:label="历史记录"
                 android:theme="@style/Theme.Direction" />
 
-        <!-- 实时检测页面 -->
-        <activity
-                android:name=".DetectionActivity"
-                android:exported="false"
-                android:label="实时检测"
-                android:theme="@style/Theme.Direction" />
-
         <!-- 实时检测结果页面 -->
         <activity
                 android:name=".DetectionResultActivity"

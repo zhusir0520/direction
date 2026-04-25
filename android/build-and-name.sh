@@ -34,7 +34,8 @@ echo -e "${YELLOW}🔨 构建APK...${NC}"
 echo -e "${GREEN}✅ 构建成功${NC}"
 
 # 2. 计算MD5
-APK="app/build/outputs/apk/debug/app-debug.apk"
+OUTPUT_DIR="app/build/outputs/apk/debug"
+APK="$OUTPUT_DIR/app-debug.apk"
 if [ ! -f "$APK" ]; then
     echo -e "${RED}❌ APK文件不存在: $APK${NC}"
     exit 1
@@ -43,7 +44,7 @@ fi
 # 计算MD5 (兼容Windows/Linux/Mac)
 if command -v certutil &> /dev/null; then
     # Windows
-    MD5=$(certutil -hashfile "$APK" MD5 | grep -v "MD5" | tr -d ' \r\n')
+    MD5=$(certutil -hashfile "$APK" MD5 | sed -n '2p' | tr -d ' \r\n')
 elif command -v md5sum &> /dev/null; then
     # Linux
     MD5=$(md5sum "$APK" | cut -d' ' -f1)
@@ -55,23 +56,25 @@ else
     exit 1
 fi
 
-APK_NAME="direction-${MD5}.apk"
-cp "$APK" "$APK_NAME"
+SHORT_MD5="${MD5:0:7}"
+APK_NAME="$OUTPUT_DIR/direction-${SHORT_MD5}.apk"
+mv "$APK" "$APK_NAME"
 
 echo -e "${GREEN}✅ APK已命名: ${APK_NAME}${NC}"
-echo -e "${GREEN}   MD5: ${MD5}${NC}"
+echo -e "${GREEN}   MD5(短): ${SHORT_MD5}${NC}"
+echo -e "${GREEN}   MD5(完整): ${MD5}${NC}"
 echo -e "${GREEN}   大小: $(du -h "$APK_NAME" | cut -f1)${NC}"
 
 # 3. 清理旧APK
 if [ "$CLEANUP" = true ]; then
-    OLD_COUNT=$(ls -1 direction-*.apk 2>/dev/null | wc -l)
+    OLD_COUNT=$(ls -1 "$OUTPUT_DIR"/direction-*.apk 2>/dev/null | wc -l)
     # 保留当前文件，删除其他
-    for old in direction-*.apk; do
+    for old in "$OUTPUT_DIR"/direction-*.apk; do
         if [ "$old" != "$APK_NAME" ]; then
             rm -f "$old"
         fi
     done
-    NEW_COUNT=$(ls -1 direction-*.apk 2>/dev/null | wc -l)
+    NEW_COUNT=$(ls -1 "$OUTPUT_DIR"/direction-*.apk 2>/dev/null | wc -l)
     CLEANED=$((OLD_COUNT - NEW_COUNT))
     echo -e "${YELLOW}🧹 已清理 ${CLEANED} 个旧APK${NC}"
 fi
@@ -100,7 +103,7 @@ if [ "$INSTALL" = true ]; then
 
     if [ -n "$ADB" ]; then
         echo -e "${YELLOW}📱 安装到设备...${NC}"
-        if "$ADB" install -r "$APK" 2>&1; then
+        if "$ADB" install -r "$APK_NAME" 2>&1; then
             echo -e "${GREEN}✅ 安装成功${NC}"
         else
             echo -e "${RED}⚠️  安装失败（设备可能未连接）${NC}"

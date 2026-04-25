@@ -107,7 +107,7 @@ class NotificationUtils(private val context: Context) {
     /**
      * 发送检测结果通知
      */
-    fun sendDetectionNotification(result: DetectionResult, enableVibration: Boolean = true) {
+    fun sendDetectionNotification(result: DetectionResult, enableVibration: Boolean = true, enableSound: Boolean = true) {
         val title = if (result.isNSFW) {
             "⚠️ 检测到不适宜内容"
         } else {
@@ -147,7 +147,11 @@ class NotificationUtils(private val context: Context) {
                         setVibrate(longArrayOf(0, 1000, 250, 1000, 250, 1000))
                     }
                     setLights(android.graphics.Color.RED, 1000, 1000)
-                    setSound(android.provider.Settings.System.DEFAULT_NOTIFICATION_URI)
+                    if (enableSound) {
+                        setSound(android.provider.Settings.System.DEFAULT_NOTIFICATION_URI)
+                    } else {
+                        setSound(null)
+                    }
                     setCategory(NotificationCompat.CATEGORY_ALARM)
                 }
             }

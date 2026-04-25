@@ -1,27 +1,19 @@
 package com.example.direction
 
-import android.Manifest
 import android.app.Activity
 import android.content.Context
 import android.content.Intent
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
-import android.hardware.display.DisplayManager
 import android.media.projection.MediaProjectionManager
 import android.net.Uri
 import android.os.Build
 import android.os.Bundle
-import android.provider.OpenableColumns
 import android.provider.Settings
-import android.util.Log
-import android.util.Base64
+import android.Manifest
 import com.example.direction.utils.LogUtils
-import com.google.gson.Gson
-import com.google.gson.reflect.TypeToken
-import com.example.direction.model.BackendModelResultDto
 import android.widget.Toast
 import android.app.ActivityManager
-import java.util.Calendar
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
@@ -29,10 +21,6 @@ import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.*
 import androidx.compose.foundation.layout.*
-import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.LazyRow
-import androidx.compose.foundation.lazy.rememberLazyListState
-import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.*
@@ -40,31 +28,18 @@ import androidx.compose.runtime.*
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.setValue
-import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.platform.LocalContext
-import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.text.font.FontStyle
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import androidx.compose.ui.text.style.TextAlign
-import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
-import androidx.compose.ui.draw.clip
-import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.res.painterResource
-import androidx.compose.ui.res.vectorResource
-import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.foundation.background
-import androidx.compose.foundation.BorderStroke
-// import androidx.lifecycle.viewmodel.compose.viewModel
 import com.example.direction.manager.TimeWindowManager
 import com.example.direction.service.NsfwMonitorService
 import com.example.direction.detector.classifier.NSFWClassifier
@@ -77,28 +52,13 @@ import com.example.direction.DetectionResultActivity
 import android.content.BroadcastReceiver
 import android.content.IntentFilter
 import androidx.core.content.ContextCompat
-import androidx.compose.animation.AnimatedVisibility
-import androidx.compose.animation.fadeIn
-import androidx.compose.animation.fadeOut
-import androidx.compose.animation.expandVertically
-import androidx.compose.animation.shrinkVertically
-import androidx.compose.foundation.clickable
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.async
-import androidx.compose.runtime.rememberCoroutineScope
-import kotlinx.coroutines.withTimeout
-import java.io.ByteArrayOutputStream
 import java.io.InputStream
-import java.text.SimpleDateFormat
-import java.util.Date
-import java.util.Locale
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.ExpandLess
-import androidx.compose.material.icons.filled.ExpandMore
 
 class MainActivity : ComponentActivity() {
 
@@ -292,8 +252,8 @@ class MainActivity : ComponentActivity() {
 
                         // 打开实时检测结果页面
                         LogUtils.i("MainActivity", "准备打开实时检测结果页面")
-                        // 先显示一个Toast测试
-                        Toast.makeText(this@MainActivity, "检测完成，正在打开结果页面...", Toast.LENGTH_SHORT).show()
+                        // 先隐藏loading，再启动结果页，做到无缝过渡
+                        showDetectionLoadingDialog = false
                         try {
                             LogUtils.i("MainActivity", "正在打开DetectionResultActivity")
                             // 创建清理过的副本，移除大字段以避免TransactionTooLargeException
@@ -807,303 +767,7 @@ class MainActivity : ComponentActivity() {
         }
     }
 
-} // 修复：正确闭合 MainActivity 类
-
-/**
- * 应用主内容（Clash for Android样式）
- */
-/* @Composable
-旧UI函数，已弃用
-fun DirectionAppContent(
-    timeWindowManager: TimeWindowManager,
-    onRequestPermission: () -> Unit,
-    onRequestNotificationPermission: () -> Unit,
-    onUploadImage: () -> Unit,
-    onViewLogs: () -> Unit,
-    onViewHistory: () -> Unit,
-    onShareLogs: () -> Unit,
-    detectionResult: DetectionResult?,
-    selectedImage: Bitmap?,
-    isLoading: Boolean,
-    uiPermissionState: Boolean,
-    notificationPermissionState: Boolean
-) {
-    // 状态
-    val hasPermission = remember(uiPermissionState) { derivedStateOf {
-        LogUtils.i("MainActivity", "UI状态计算: hasPermission=$uiPermissionState")
-        uiPermissionState
-    } }
-    val permissionValid = remember(uiPermissionState) { derivedStateOf {
-        // 简化：权限总是有效（没有过期机制）
-        LogUtils.i("MainActivity", "UI状态计算: permissionValid=true")
-        true
-    } }
-    val hasNotificationPermission = remember(notificationPermissionState) { derivedStateOf {
-        LogUtils.i("MainActivity", "UI状态计算: hasNotificationPermission=$notificationPermissionState")
-        notificationPermissionState
-    } }
-
-    val scrollState = rememberScrollState()
-
-    // 录屏状态：开启或关闭
-    val isScreenCaptureEnabled = hasPermission.value && permissionValid.value
-
-    Column(
-        modifier = Modifier
-            .fillMaxSize()
-            .padding(16.dp)
-            .verticalScroll(scrollState),
-        horizontalAlignment = Alignment.CenterHorizontally,
-        verticalArrangement = Arrangement.spacedBy(16.dp)
-    ) {
-        // 标题
-        Text(
-            text = "屏幕内容检测",
-            fontSize = 24.sp,
-            fontWeight = FontWeight.Bold,
-            color = MaterialTheme.colorScheme.primary
-        )
-
-        // 状态卡片
-        Card(
-            modifier = Modifier.fillMaxWidth(),
-            colors = CardDefaults.cardColors(
-                containerColor = MaterialTheme.colorScheme.surfaceVariant
-            )
-        ) {
-            Column(
-                modifier = Modifier.padding(16.dp),
-                verticalArrangement = Arrangement.spacedBy(8.dp)
-            ) {
-                Text(
-                    text = "应用状态",
-                    fontSize = 18.sp,
-                    fontWeight = FontWeight.Medium
-                )
-
-
-
-
-                // 通知权限按钮行
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.SpaceBetween,
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    Text(
-                        text = "通知权限",
-                        fontSize = 14.sp,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
-
-                    if (hasNotificationPermission.value) {
-                        // 已授予 - 绿色小按钮
-                        Button(
-                            onClick = { },
-                            modifier = Modifier.width(80.dp).height(36.dp),
-                            colors = ButtonDefaults.buttonColors(
-                                containerColor = Color(0xFF4CAF50), // 绿色
-                                contentColor = Color.White
-                            ),
-                            enabled = true // 保持颜色，但点击无反应
-                        ) {
-                            Text("已授予", fontSize = 12.sp)
-                        }
-                    } else {
-                        // 未授予 - 灰色按钮，点击可授予
-                        Button(
-                            onClick = onRequestNotificationPermission,
-                            modifier = Modifier.width(80.dp).height(36.dp),
-                            colors = ButtonDefaults.buttonColors(
-                                containerColor = Color(0xFF9E9E9E), // 灰色
-                                contentColor = Color.White
-                            )
-                        ) {
-                            Text("未授予", fontSize = 12.sp)
-                        }
-                    }
-                }
-
-            }
-        }
-
-
-        // 屏幕截图权限状态卡片（始终显示）
-        Card(
-            modifier = Modifier.fillMaxWidth(),
-            colors = CardDefaults.cardColors(
-                containerColor = if (hasPermission.value && permissionValid.value) {
-                    Color(0xFF4CAF50) // 绿色 - 已授权且有效
-                } else if (hasPermission.value && !permissionValid.value) {
-                    Color(0xFFFF9800) // 橙色 - 已授权但过期
-                } else {
-                    Color(0xFF9E9E9E) // 灰色 - 未授权
-                }
-            )
-        ) {
-            Column(
-                modifier = Modifier.padding(16.dp),
-                verticalArrangement = Arrangement.spacedBy(8.dp),
-                horizontalAlignment = Alignment.CenterHorizontally
-            ) {
-                // 图标和状态文本
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.Center
-                ) {
-                    // 电源符号（白色）
-                    if (hasPermission.value && permissionValid.value) {
-                        Text(
-                            text = "⚡",
-                            fontSize = 24.sp,
-                            color = Color.White
-                        )
-                    } else {
-                        Text(
-                            text = "📱",
-                            fontSize = 24.sp,
-                            color = Color.White
-                        )
-                    }
-
-                    Spacer(modifier = Modifier.width(12.dp))
-                    Column(
-                        verticalArrangement = Arrangement.spacedBy(4.dp)
-                    ) {
-                        Text(
-                            text = when {
-                                hasPermission.value && permissionValid.value -> "屏幕截图权限已开启"
-                                hasPermission.value && !permissionValid.value -> "屏幕截图权限已过期"
-                                else -> "屏幕截图权限已关闭"
-                            },
-                            fontSize = 16.sp,
-                            fontWeight = FontWeight.Medium,
-                            color = Color.White
-                        )
-                        Text(
-                            text = when {
-                                hasPermission.value && permissionValid.value -> "检测功能运行中"
-                                hasPermission.value && !permissionValid.value -> "权限已过期，请重新授权"
-                                else -> "点击圆形按钮授权"
-                            },
-                            fontSize = 12.sp,
-                            color = Color.White.copy(alpha = 0.9f)
-                        )
-                    }
-                }
-
-                // 圆形按钮（始终显示，根据状态变化）
-                Button(
-                    onClick = {
-                        if (!hasPermission.value || !permissionValid.value) {
-                            onRequestPermission()
-                        }
-                        // 如果权限有效，点击不执行操作（或可以执行停止服务等）
-                    },
-                    modifier = Modifier.size(100.dp).border(2.dp, Color.White, CircleShape),
-                    shape = CircleShape,
-                    colors = ButtonDefaults.buttonColors(
-                        containerColor = when {
-                            hasPermission.value && permissionValid.value -> Color(0xFF4CAF50) // 绿色 - 已授权且有效
-                            hasPermission.value && !permissionValid.value -> Color(0xFFFF9800) // 橙色 - 已授权但过期
-                            else -> Color(0xFF757575) // 深灰色 - 未授权（与背景#9E9E9E形成对比）
-                        },
-                        contentColor = Color.White
-                    ),
-                    enabled = !hasPermission.value || !permissionValid.value // 权限有效时不可点击
-                ) {
-                    Text(
-                        text = when {
-                            hasPermission.value && permissionValid.value -> "已开启"
-                            hasPermission.value && !permissionValid.value -> "已过期"
-                            else -> "授权"
-                        },
-                        fontSize = 14.sp,
-                        fontWeight = FontWeight.Medium
-                    )
-                }
-            }
-        }
-
-
-
-
-        // 图片上传和分类功能
-        ImageClassificationSection(
-            onUploadImage = onUploadImage,
-            detectionResult = detectionResult,
-            selectedImage = selectedImage,
-            isLoading = isLoading
-        )
-
-        // 检测设置已迁移到SettingsActivity中
-        // DetectionSettingsSection() // 已弃用
-
-        // 日志管理
-        LogHistorySection(
-            onViewLogs = onViewLogs,
-            onViewHistory = onViewHistory,
-            onShareLogs = onShareLogs
-        )
-
-        // 信息说明（可折叠）
-        var isExpanded by remember { mutableStateOf(false) }
-        Card(
-            modifier = Modifier.fillMaxWidth(),
-            colors = CardDefaults.cardColors(
-                containerColor = MaterialTheme.colorScheme.surfaceVariant
-            )
-        ) {
-            Column(
-                modifier = Modifier.padding(16.dp),
-                verticalArrangement = Arrangement.spacedBy(8.dp)
-            ) {
-                // 可点击的标题行
-                Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .clickable { isExpanded = !isExpanded },
-                    horizontalArrangement = Arrangement.SpaceBetween,
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    Text(
-                        text = "ℹ️ 功能说明",
-                        fontSize = 16.sp,
-                        fontWeight = FontWeight.Medium
-                    )
-                    Text(
-                        text = if (isExpanded) "▲" else "▼",
-                        fontSize = 16.sp,
-                        color = MaterialTheme.colorScheme.primary
-                    )
-                }
-
-                // 可折叠内容
-                AnimatedVisibility(
-                    visible = isExpanded,
-                    enter = fadeIn() + expandVertically(),
-                    exit = fadeOut() + shrinkVertically()
-                ) {
-                    Column(
-                        verticalArrangement = Arrangement.spacedBy(4.dp)
-                    ) {
-                        Text(
-                            text = "• 按设定间隔自动检测屏幕内容\n" +
-                                    "• 检测到不适宜内容时会发送通知\n" +
-                                    "• 截图权限仅用于内容检测，数据不会上传\n" +
-                                    "• 权限在授予后24小时内有效",
-                            fontSize = 14.sp
-                        )
-                    }
-                }
-            }
-        }
-
-        Spacer(modifier = Modifier.height(32.dp))
-    }
 }
-*/
 
 @Composable
 fun ClashStyleAppContent(
@@ -1135,6 +799,7 @@ fun ClashStyleAppContent(
         notificationPermissionState
     } }
 
+    var showAboutDialog by remember { mutableStateOf(false) }
     val scrollState = rememberScrollState()
 
     // 实时检测loading对话框 - 只显示旋转圆圈
@@ -1298,7 +963,7 @@ fun ClashStyleAppContent(
                         verticalArrangement = Arrangement.spacedBy(4.dp)
                     ) {
                         Text(
-                            text = "记录",
+                            text = "历史记录",
                             fontSize = 18.sp,
                             fontWeight = FontWeight.Medium,
                             color = Color.White
@@ -1412,11 +1077,7 @@ fun ClashStyleAppContent(
                 colors = CardDefaults.cardColors(
                     containerColor = MaterialTheme.colorScheme.surfaceVariant
                 ),
-                onClick = {
-                    // 显示关于信息
-                    // 暂时显示功能说明
-                    // 可以打开一个对话框
-                }
+                onClick = { showAboutDialog = true }
             ) {
                 Row(
                     modifier = Modifier
@@ -1452,1096 +1113,68 @@ fun ClashStyleAppContent(
 
         Spacer(modifier = Modifier.height(32.dp))
     }
-}
 
-/**
- * 状态行组件
- */
-@Composable
-fun StatusRow(
-    label: String,
-    value: String,
-    status: Status
-) {
-    Row(
-        modifier = Modifier.fillMaxWidth(),
-        horizontalArrangement = Arrangement.SpaceBetween,
-        verticalAlignment = Alignment.CenterVertically
-    ) {
-        Text(
-            text = label,
-            fontSize = 14.sp,
-            color = MaterialTheme.colorScheme.onSurfaceVariant
-        )
-        Text(
-            text = value,
-            fontSize = 14.sp,
-            fontWeight = FontWeight.Medium,
-            color = when (status) {
-                Status.ACTIVE -> Color(0xFF2E7D32) // 绿色
-                Status.INACTIVE -> Color(0xFF757575) // 灰色
-                Status.WARNING -> Color(0xFFF57C00) // 橙色
-                Status.NEUTRAL -> MaterialTheme.colorScheme.onSurface
-            }
-        )
+    // 关于对话框
+    if (showAboutDialog) {
+        AboutDialog(onDismiss = { showAboutDialog = false })
     }
 }
 
 /**
- * 状态枚举
- */
-enum class Status {
-    ACTIVE,    // 活跃/正常
-    INACTIVE,  // 不活跃/禁用
-    WARNING,   // 警告
-    NEUTRAL    // 中性
-}
-
-// @Preview(showBackground = true)
-// @Composable
-// fun DirectionAppPreview() {
-//     DirectionTheme {
-//         val mockPermissionManager = object : PermissionManager(androidx.compose.ui.platform.LocalContext.current) {
-//             override fun hasMediaProjectionPermission(): Boolean = false
-//             override fun isMediaProjectionPermissionValid(): Boolean = false
-//         }
-//         val mockTimeManager = TimeWindowManager(androidx.compose.ui.platform.LocalContext.current)
-//
-//         DirectionAppContent(
-//             permissionManager = mockPermissionManager,
-//             timeWindowManager = mockTimeManager,
-//             onRequestPermission = {}
-//         )
-//     }
-// }
-
-/**
- * 图片上传和分类界面
+ * 关于对话框
  */
 @Composable
-fun ImageClassificationSection(
-    onUploadImage: () -> Unit,
-    detectionResult: DetectionResult?,
-    selectedImage: Bitmap?,
-    isLoading: Boolean
-) {
-    Card(
-        modifier = Modifier.fillMaxWidth(),
-        colors = CardDefaults.cardColors(
-            containerColor = MaterialTheme.colorScheme.surfaceVariant
-        )
-    ) {
-        Column(
-            modifier = Modifier.padding(16.dp),
-            verticalArrangement = Arrangement.spacedBy(16.dp)
-        ) {
-            Text(
-                text = "🖼️ 图片内容检测",
-                fontSize = 18.sp,
-                fontWeight = FontWeight.Medium
-            )
-
-            Text(
-                text = "上传图片实时查看NSFW/SFW分类结果",
-                fontSize = 14.sp,
-                color = MaterialTheme.colorScheme.onSurfaceVariant
-            )
-
-            // 上传按钮
-            Button(
-                onClick = onUploadImage,
-                modifier = Modifier.fillMaxWidth(),
-                enabled = !isLoading
-            ) {
-                if (isLoading) {
-                    CircularProgressIndicator(
-                        modifier = Modifier.size(16.dp),
-                        strokeWidth = 2.dp,
-                        color = MaterialTheme.colorScheme.onPrimary
-                    )
-                    Spacer(modifier = Modifier.width(8.dp))
-                    Text("处理中...")
-                } else {
-                    Text("📁")
-                    Spacer(modifier = Modifier.width(8.dp))
-                    Text("选择图片")
-                }
-            }
-
-            // 图片预览
-            selectedImage?.let { bitmap ->
-                Card(
-                    modifier = Modifier.fillMaxWidth(),
-                    shape = RoundedCornerShape(8.dp)
-                ) {
-                    Image(
-                        bitmap = bitmap.asImageBitmap(),
-                        contentDescription = "已选图片",
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .height(200.dp)
-                            .clip(RoundedCornerShape(8.dp)),
-                        contentScale = ContentScale.Crop
-                    )
-                }
-            }
-
-            // 分类结果
-            detectionResult?.let { result ->
-                if (result.error != null) {
-                    // 错误状态
-                    Card(
-                        modifier = Modifier.fillMaxWidth(),
-                        colors = CardDefaults.cardColors(
-                            containerColor = Color(0xFFFFEBEE) // 浅红色
-                        )
-                    ) {
-                        Column(
-                            modifier = Modifier.padding(16.dp),
-                            verticalArrangement = Arrangement.spacedBy(8.dp)
-                        ) {
-                            Text(
-                                text = "❌ 分类失败",
-                                fontSize = 16.sp,
-                                fontWeight = FontWeight.Medium,
-                                color = Color(0xFFC62828)
-                            )
-                            Text(
-                                text = result.error,
-                                fontSize = 14.sp
-                            )
-                        }
-                    }
-                } else {
-                    // 成功结果
-                    Column(
-                        verticalArrangement = Arrangement.spacedBy(12.dp)
-                    ) {
-                        // 总体结果卡片
-                        Card(
-                            modifier = Modifier.fillMaxWidth(),
-                            colors = CardDefaults.cardColors(
-                                containerColor = if (result.isNSFW) Color(0xFFFFF3E0) else Color(0xFFE8F5E9)
-                            )
-                        ) {
-                            Column(
-                                modifier = Modifier.padding(16.dp),
-                                verticalArrangement = Arrangement.spacedBy(8.dp)
-                            ) {
-                                Row(
-                                    horizontalArrangement = Arrangement.SpaceBetween,
-                                    modifier = Modifier.fillMaxWidth()
-                                ) {
-                                    Text(
-                                        text = if (result.isNSFW) "⚠️ NSFW（不适宜内容）" else "✅ SFW（安全内容）",
-                                        fontSize = 16.sp,
-                                        fontWeight = FontWeight.Medium,
-                                        color = if (result.isNSFW) Color(0xFFF57C00) else Color(0xFF2E7D32)
-                                    )
-                                    Text(
-                                        text = "${"%.1f".format(result.confidence * 100)}%",
-                                        fontSize = 16.sp,
-                                        fontWeight = FontWeight.Bold
-                                    )
-                                }
-
-                                // SFW/NSFW分数条
-                                ScoreBar(
-                                    sfwScore = result.sfwScore,
-                                    nsfwScore = result.nsfwScore
-                                )
-
-                                // SFW/NSFW分数文本
-                                Row(
-                                    horizontalArrangement = Arrangement.SpaceBetween,
-                                    modifier = Modifier.fillMaxWidth()
-                                ) {
-                                    Text(
-                                        text = "SFW: ${"%.1f".format(result.sfwScore * 100)}%",
-                                        fontSize = 14.sp,
-                                        color = Color(0xFF2E7D32)
-                                    )
-                                    Text(
-                                        text = "NSFW: ${"%.1f".format(result.nsfwScore * 100)}%",
-                                        fontSize = 14.sp,
-                                        color = Color(0xFFF57C00)
-                                    )
-                                }
-                            }
-                        }
-
-                        // 原始分类分数（五项）
-                        if (result.rawScores.isNotEmpty()) {
-                            Card(
-                                modifier = Modifier.fillMaxWidth(),
-                                colors = CardDefaults.cardColors(
-                                    containerColor = MaterialTheme.colorScheme.surface
-                                )
-                            ) {
-                                Column(
-                                    modifier = Modifier.padding(16.dp),
-                                    verticalArrangement = Arrangement.spacedBy(12.dp)
-                                ) {
-                                    Text(
-                                        text = "📊 原始分类分数",
-                                        fontSize = 16.sp,
-                                        fontWeight = FontWeight.Medium
-                                    )
-
-                                    // 五项分类分数
-                                    result.rawScores.entries.forEach { (category, score) ->
-                                        RawScoreRow(category = category, score = score)
-                                    }
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-        }
-    }
-}
-
-/**
- * SFW/NSFW分数条
- */
-@Composable
-private fun ScoreBar(
-    sfwScore: Float,
-    nsfwScore: Float,
-    modifier: Modifier = Modifier
-) {
-    val total = sfwScore + nsfwScore
-    val sfwRatio = if (total > 0) sfwScore / total else 0.5f
-    val nsfwRatio = if (total > 0) nsfwScore / total else 0.5f
-
-    Row(
-        modifier = modifier
-            .fillMaxWidth()
-            .height(24.dp)
-            .clip(RoundedCornerShape(12.dp)),
-        horizontalArrangement = Arrangement.Start
-    ) {
-        // SFW部分（绿色）
-        Box(
-            modifier = Modifier
-                .weight(sfwRatio)
-                .fillMaxHeight()
-                .background(Color(0xFF4CAF50))
-        )
-        // NSFW部分（橙色）
-        Box(
-            modifier = Modifier
-                .weight(nsfwRatio)
-                .fillMaxHeight()
-                .background(Color(0xFFFF9800))
-        )
-    }
-}
-
-/**
- * 原始分类分数行
- */
-@Composable
-private fun RawScoreRow(
-    category: String,
-    score: Float,
-    modifier: Modifier = Modifier
-) {
-    Row(
-        modifier = modifier.fillMaxWidth(),
-        horizontalArrangement = Arrangement.SpaceBetween,
-        verticalAlignment = Alignment.CenterVertically
-    ) {
-        Text(
-            text = when (category) {
-                "Drawing" -> "绘画"
-                "Hentai" -> "动漫色情"
-                "Neutral" -> "正常图片"
-                "Porn" -> "真人色情"
-                "Sexy" -> "性感"
-                else -> category
-            },
-            fontSize = 14.sp
-        )
-
-        Row(
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(8.dp)
-        ) {
-            // 分数条
-            Box(
-                modifier = Modifier
-                    .width(100.dp)
-                    .height(8.dp)
-                    .clip(RoundedCornerShape(4.dp))
-                    .background(Color(0xFFE0E0E0))
-            ) {
-                Box(
-                    modifier = Modifier
-                        .fillMaxHeight()
-                        .width((score.coerceIn(0f, 1f) * 100f).dp)
-                        .clip(RoundedCornerShape(4.dp))
-                        .background(Color(0xFF2196F3))
-                )
-            }
-
-            Text(
-                text = "${"%.1f".format(score * 100)}%",
-                fontSize = 14.sp,
-                fontWeight = FontWeight.Medium,
-                color = MaterialTheme.colorScheme.primary
-            )
-        }
-    }
-}
-
-/**
- * 检测设置界面
- */
-@Deprecated(
-    "此函数已弃用，检测设置已迁移到SettingsActivity中",
-    replaceWith = ReplaceWith("SettingsActivity", "com.example.direction.SettingsActivity")
-)
-@Composable
-fun DetectionSettingsSection() {
+fun AboutDialog(onDismiss: () -> Unit) {
     val context = LocalContext.current
-    val settingsRepository = remember { com.example.direction.repository.SettingsRepository(context) }
-    val scope = rememberCoroutineScope()
-
-    // 检测间隔状态
-    var detectionInterval by remember { mutableIntStateOf(15) }
-    var isUpdating by remember { mutableStateOf(false) }
-    // NSFW阈值状态
-    var threshold by remember { mutableStateOf(0.85f) }
-    var isUpdatingThreshold by remember { mutableStateOf(false) }
-    // 悬浮窗设置状态
-    var floatingWindowEnabled by remember { mutableStateOf(false) }
-    var floatingWindowShowWarning by remember { mutableStateOf(true) }
-    var isUpdatingFloatingWindow by remember { mutableStateOf(false) }
-
-    // 后端兜底设置状态
-    var backendEnabled by remember { mutableStateOf(true) }
-    var backendUrl by remember { mutableStateOf("") }
-    var saveDebugImages by remember { mutableStateOf(false) }
-    var isUpdatingBackend by remember { mutableStateOf(false) }
-    // 无效间隔弹窗状态（已移除）
-
-    // 从设置加载当前间隔
-    LaunchedEffect(Unit) {
+    val packageInfo = remember {
         try {
-            settingsRepository.detectionInterval.collect { interval ->
-                detectionInterval = interval
-            }
+            context.packageManager.getPackageInfo(context.packageName, 0)
         } catch (e: Exception) {
-            // 忽略错误，使用默认值
+            null
         }
     }
+    val versionName = packageInfo?.versionName ?: "1.0"
 
-    // 从设置加载当前NSFW阈值
-    LaunchedEffect(Unit) {
-        try {
-            settingsRepository.nsfwThreshold.collect { value ->
-                threshold = value
-            }
-        } catch (e: Exception) {
-            // 忽略错误，使用默认值
-        }
-    }
-
-    // 从设置加载悬浮窗设置
-    LaunchedEffect(Unit) {
-        try {
-            settingsRepository.floatingWindowEnabled.collect { enabled ->
-                floatingWindowEnabled = enabled
-            }
-        } catch (e: Exception) {
-            // 忽略错误，使用默认值
-        }
-        try {
-            settingsRepository.floatingWindowShowWarning.collect { showWarning ->
-                floatingWindowShowWarning = showWarning
-            }
-        } catch (e: Exception) {
-            // 忽略错误，使用默认值
-        }
-    }
-
-    // 从设置加载后端兜底设置
-    LaunchedEffect(Unit) {
-        // 使用独立的launch块收集每个Flow，避免一个异常影响其他
-        launch {
-            try {
-                settingsRepository.backendEnabled.collect { enabled ->
-                    LogUtils.d("DetectionSettings", "backendEnabled Flow发出: $enabled")
-                    backendEnabled = enabled
-                }
-            } catch (e: Exception) {
-                LogUtils.e("DetectionSettings", "收集backendEnabled失败", e)
-                // 忽略错误，使用默认值
-            }
-        }
-        launch {
-            try {
-                settingsRepository.backendUrl.collect { url ->
-                    LogUtils.d("DetectionSettings", "backendUrl Flow发出: $url")
-                    backendUrl = url
-                }
-            } catch (e: Exception) {
-                LogUtils.e("DetectionSettings", "收集backendUrl失败", e)
-                // 忽略错误，使用默认值
-            }
-        }
-        launch {
-            try {
-                settingsRepository.saveDebugImages.collect { enabled ->
-                    LogUtils.d("DetectionSettings", "saveDebugImages Flow发出: $enabled")
-                    saveDebugImages = enabled
-                }
-            } catch (e: Exception) {
-                LogUtils.e("DetectionSettings", "收集saveDebugImages失败", e)
-                // 忽略错误，使用默认值
-            }
-        }
-    }
-
-    Card(
-        modifier = Modifier.fillMaxWidth(),
-        colors = CardDefaults.cardColors(
-            containerColor = MaterialTheme.colorScheme.surfaceVariant
-        )
-    ) {
-        Column(
-            modifier = Modifier.padding(16.dp),
-            verticalArrangement = Arrangement.spacedBy(16.dp)
-        ) {
-            Text(
-                text = "⚙️ 检测设置",
-                fontSize = 18.sp,
-                fontWeight = FontWeight.Medium
-            )
-
-            // 检测间隔设置
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = {
             Column(
-                verticalArrangement = Arrangement.spacedBy(8.dp)
+                modifier = Modifier.fillMaxWidth(),
+                horizontalAlignment = Alignment.CenterHorizontally
             ) {
-                Row(
-                    horizontalArrangement = Arrangement.SpaceBetween,
-                    modifier = Modifier.fillMaxWidth()
-                ) {
-                    Text(
-                        text = "检测间隔",
-                        fontSize = 16.sp,
-                        fontWeight = FontWeight.Medium
-                    )
-
-                    Text(
-                        text = "${detectionInterval}分钟",
-                        fontSize = 16.sp,
-                        fontWeight = FontWeight.Bold,
-                        color = MaterialTheme.colorScheme.primary
-                    )
-                }
-
-
-
-
-                // 自定义间隔输入
-                Row(
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(8.dp),
-                    modifier = Modifier.fillMaxWidth()
-                ) {
-                    Text(
-                        text = "自定义:",
-                        fontSize = 14.sp
-                    )
-
-                    var customIntervalText by remember { mutableStateOf("") }
-
-                    OutlinedTextField(
-                        value = customIntervalText,
-                        onValueChange = { customIntervalText = it.filter { char -> char.isDigit() } },
-                        modifier = Modifier.weight(1f),
-                        placeholder = { Text("输入分钟数") },
-                        singleLine = true,
-                        supportingText = {
-                            if (customIntervalText.isNotEmpty()) {
-                                val value = customIntervalText.toIntOrNull()
-                                when {
-                                    value == null -> Text("请输入有效数字")
-                                    value < 1 || value > 1440 -> Text("输入1-1440之间的数字")
-                                    value < 1 -> Text("间隔必须大于0分钟")
-                                    else -> null
-                                }
-                            }
-                        }
-                    )
-
-                    Button(
-                        onClick = {
-                            val value = customIntervalText.toIntOrNull()
-                            if (value != null && value in 1..1440 && !isUpdating && detectionInterval != value) {
-                                detectionInterval = value
-                                isUpdating = true
-                                customIntervalText = ""
-
-                                CoroutineScope(Dispatchers.IO).launch {
-                                    try {
-                                        settingsRepository.setDetectionInterval(value)
-                                        // 前台服务将通过Flow自动更新间隔
-                                        LogUtils.i("DetectionSettings", "检测间隔已更新为${value}分钟")
-                                        withContext(Dispatchers.Main) {
-                                            Toast.makeText(context, "检测间隔已更新为${value}分钟", Toast.LENGTH_SHORT).show()
-                                        }
-                                    } catch (e: Exception) {
-                                        LogUtils.e("DetectionSettings", "更新检测间隔失败", e)
-                                    } finally {
-                                        isUpdating = false
-                                    }
-                                }
-                            }
-                        },
-                        enabled = customIntervalText.toIntOrNull() in 1..1440 && !isUpdating
-                    ) {
-                        if (isUpdating) {
-                            CircularProgressIndicator(
-                                modifier = Modifier.size(16.dp),
-                                strokeWidth = 2.dp,
-                                color = MaterialTheme.colorScheme.onPrimary
-                            )
-                        } else {
-                            Text("应用")
-                        }
-                    }
-                }
-
-                if (isUpdating) {
-                    Row(
-                        horizontalArrangement = Arrangement.Center,
-                        modifier = Modifier.fillMaxWidth()
-                    ) {
-                        CircularProgressIndicator(
-                            modifier = Modifier.size(16.dp),
-                            strokeWidth = 2.dp
-                        )
-                        Spacer(modifier = Modifier.width(8.dp))
-                        Text(
-                            text = "更新中...",
-                            fontSize = 12.sp,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
-                        )
-                    }
-                }
+                Text("Direction", fontWeight = FontWeight.Bold, fontSize = 20.sp)
             }
-
-            HorizontalDivider( // 修复：使用 HorizontalDivider 替换 Divider
-                modifier = Modifier.padding(vertical = 8.dp),
-                color = MaterialTheme.colorScheme.outline.copy(alpha = 0.2f)
-            )
-
-            // NSFW阈值设置
+        },
+        text = {
             Column(
-                verticalArrangement = Arrangement.spacedBy(8.dp)
-            ) {
-                Row(
-                    horizontalArrangement = Arrangement.SpaceBetween,
-                    modifier = Modifier.fillMaxWidth()
-                ) {
-                    Text(
-                        text = "NSFW置信度阈值",
-                        fontSize = 16.sp,
-                        fontWeight = FontWeight.Medium
-                    )
-
-                    Text(
-                        text = "${(threshold * 100).toInt()}%",
-                        fontSize = 16.sp,
-                        fontWeight = FontWeight.Bold,
-                        color = MaterialTheme.colorScheme.primary
-                    )
-                }
-
-                // 阈值滑块
-                Slider(
-                    value = threshold,
-                    onValueChange = { newValue ->
-                        threshold = newValue
-                    },
-                    valueRange = 0.0f..1.0f,
-                    steps = 19, // 0.05步长
-                    modifier = Modifier.fillMaxWidth()
-                )
-
-                Row(
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.SpaceBetween,
-                    modifier = Modifier.fillMaxWidth()
-                ) {
-                    Text("0%", fontSize = 12.sp)
-                    Text("50%", fontSize = 12.sp)
-                    Text("100%", fontSize = 12.sp)
-                }
-
-                // 阈值保存按钮
-                Button(
-                    onClick = {
-                        if (!isUpdatingThreshold) {
-                            isUpdatingThreshold = true
-
-                            CoroutineScope(Dispatchers.IO).launch {
-                                try {
-                                    settingsRepository.setNsfwThreshold(threshold)
-                                    LogUtils.i("DetectionSettings", "NSFW阈值已更新为${(threshold * 100).toInt()}%")
-                                    withContext(Dispatchers.Main) {
-                                        Toast.makeText(context, "NSFW阈值已更新为${(threshold * 100).toInt()}%", Toast.LENGTH_SHORT).show()
-                                    }
-                                } catch (e: Exception) {
-                                    LogUtils.e("DetectionSettings", "更新NSFW阈值失败", e)
-                                } finally {
-                                    isUpdatingThreshold = false
-                                }
-                            }
-                        }
-                    },
-                    modifier = Modifier.fillMaxWidth(),
-                    enabled = !isUpdatingThreshold
-                ) {
-                    if (isUpdatingThreshold) {
-                        CircularProgressIndicator(
-                            modifier = Modifier.size(16.dp),
-                            strokeWidth = 2.dp,
-                            color = MaterialTheme.colorScheme.onPrimary
-                        )
-                        Spacer(modifier = Modifier.width(8.dp))
-                        Text("更新中...")
-                    } else {
-                        Text("保存阈值设置")
-                    }
-                }
-
-                if (isUpdatingThreshold) {
-                    Row(
-                        horizontalArrangement = Arrangement.Center,
-                        modifier = Modifier.fillMaxWidth()
-                    ) {
-                        CircularProgressIndicator(
-                            modifier = Modifier.size(16.dp),
-                            strokeWidth = 2.dp
-                        )
-                        Spacer(modifier = Modifier.width(8.dp))
-                        Text(
-                            text = "更新中...",
-                            fontSize = 12.sp,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
-                        )
-                    }
-                }
-
-                Text(
-                    text = "阈值说明：NSFW概率超过此阈值时判定为不适宜内容。\n" +
-                            "当前阈值：${(threshold * 100).toInt()}%，服务将在下次检测时自动应用新阈值。",
-                    fontSize = 12.sp,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    fontStyle = androidx.compose.ui.text.font.FontStyle.Italic
-                )
-            }
-
-            // 悬浮窗设置
-            Column(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalAlignment = Alignment.CenterHorizontally,
                 verticalArrangement = Arrangement.spacedBy(8.dp)
             ) {
                 Text(
-                    text = "悬浮窗设置",
+                    text = "v$versionName",
+                    fontSize = 14.sp,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+                Spacer(modifier = Modifier.height(4.dp))
+                Text(
+                    text = "NSFW 屏幕内容检测工具",
                     fontSize = 16.sp,
                     fontWeight = FontWeight.Medium
                 )
-
-                // 启用悬浮窗开关
-                Row(
-                    horizontalArrangement = Arrangement.SpaceBetween,
-                    verticalAlignment = Alignment.CenterVertically,
-                    modifier = Modifier.fillMaxWidth()
-                ) {
-                    Text(
-                        text = "启用悬浮窗",
-                        fontSize = 14.sp
-                    )
-                    Switch(
-                        checked = floatingWindowEnabled,
-                        onCheckedChange = { newValue ->
-                            floatingWindowEnabled = newValue
-                            isUpdatingFloatingWindow = true
-                            CoroutineScope(Dispatchers.IO).launch {
-                                try {
-                                    settingsRepository.setFloatingWindowEnabled(newValue)
-                                    LogUtils.i("DetectionSettings", "悬浮窗启用状态已更新: $newValue")
-
-                                    if (newValue) {
-                                        // 如果启用悬浮窗，检查并请求权限
-                                        withContext(Dispatchers.Main) {
-                                            val mainActivity = context as? MainActivity
-                                            if (mainActivity != null) {
-                                                mainActivity.checkAndRequestFloatingWindowPermission()
-                                            } else {
-                                                LogUtils.e("DetectionSettings", "无法获取MainActivity实例")
-                                                Toast.makeText(context, "无法启用悬浮窗", Toast.LENGTH_SHORT).show()
-                                            }
-                                        }
-                                    } else {
-                                        // 如果禁用悬浮窗，隐藏悬浮窗
-                                        withContext(Dispatchers.Main) {
-                                            val mainActivity = context as? MainActivity
-                                            if (mainActivity != null) {
-                                                mainActivity.hideFloatingWindow()
-                                            }
-                                            Toast.makeText(context, "悬浮窗已禁用", Toast.LENGTH_SHORT).show()
-                                        }
-                                    }
-                                } catch (e: Exception) {
-                                    LogUtils.e("DetectionSettings", "更新悬浮窗设置失败", e)
-                                    withContext(Dispatchers.Main) {
-                                        Toast.makeText(context, "更新悬浮窗设置失败: ${e.message}", Toast.LENGTH_SHORT).show()
-                                    }
-                                } finally {
-                                    isUpdatingFloatingWindow = false
-                                }
-                            }
-                        },
-                        enabled = !isUpdatingFloatingWindow
-                    )
-                }
-
-                // NSFW警告提示开关
-                Row(
-                    horizontalArrangement = Arrangement.SpaceBetween,
-                    verticalAlignment = Alignment.CenterVertically,
-                    modifier = Modifier.fillMaxWidth()
-                ) {
-                    Text(
-                        text = "NSFW警告提示",
-                        fontSize = 14.sp
-                    )
-                    Switch(
-                        checked = floatingWindowShowWarning,
-                        onCheckedChange = { newValue ->
-                            floatingWindowShowWarning = newValue
-                            isUpdatingFloatingWindow = true
-                            CoroutineScope(Dispatchers.IO).launch {
-                                try {
-                                    settingsRepository.setFloatingWindowShowWarning(newValue)
-                                    LogUtils.i("DetectionSettings", "悬浮窗警告显示状态已更新: $newValue")
-                                    withContext(Dispatchers.Main) {
-                                        Toast.makeText(context, "NSFW警告${if (newValue) "启用" else "禁用"}", Toast.LENGTH_SHORT).show()
-                                    }
-                                } catch (e: Exception) {
-                                    LogUtils.e("DetectionSettings", "更新悬浮窗警告设置失败", e)
-                                } finally {
-                                    isUpdatingFloatingWindow = false
-                                }
-                            }
-                        },
-                        enabled = !isUpdatingFloatingWindow
-                    )
-                }
-
                 Text(
-                    text = "说明：启用悬浮窗后，授权录屏权限时将自动请求悬浮窗权限。检测到NSFW内容时，悬浮窗会显示警告\"想想你该干什么！\"",
-                    fontSize = 12.sp,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    fontStyle = androidx.compose.ui.text.font.FontStyle.Italic
+                    text = "自动检测屏幕中的不适宜内容，\n保护您的隐私安全。",
+                    fontSize = 14.sp,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
             }
-
-            HorizontalDivider( // 修复：使用 HorizontalDivider 替换 Divider
-                modifier = Modifier.padding(vertical = 8.dp),
-                color = MaterialTheme.colorScheme.outline.copy(alpha = 0.2f)
-            )
-
-            // 后端兜底设置
-            Column(
-                verticalArrangement = Arrangement.spacedBy(8.dp)
-            ) {
-                Text(
-                    text = "后端兜底检测设置",
-                    fontSize = 16.sp,
-                    fontWeight = FontWeight.Medium
-                )
-
-                // 启用后端检测开关
-                Row(
-                    horizontalArrangement = Arrangement.SpaceBetween,
-                    verticalAlignment = Alignment.CenterVertically,
-                    modifier = Modifier.fillMaxWidth()
-                ) {
-                    Text(
-                        text = "启用后端兜底检测",
-                        fontSize = 14.sp
-                    )
-                    Switch(
-                        checked = backendEnabled,
-                        onCheckedChange = { newValue ->
-                            backendEnabled = newValue
-                            isUpdatingBackend = true
-                            CoroutineScope(Dispatchers.IO).launch {
-                                try {
-                                    settingsRepository.setBackendEnabled(newValue)
-                                    LogUtils.i("DetectionSettings", "后端兜底检测启用状态已更新: $newValue")
-                                    withContext(Dispatchers.Main) {
-                                        Toast.makeText(context, "后端兜底检测${if (newValue) "启用" else "禁用"}", Toast.LENGTH_SHORT).show()
-                                    }
-                                } catch (e: Exception) {
-                                    LogUtils.e("DetectionSettings", "更新后端启用状态失败", e)
-                                } finally {
-                                    isUpdatingBackend = false
-                                }
-                            }
-                        },
-                        enabled = !isUpdatingBackend
-                    )
-                }
-
-                // 后端URL设置
-                Column(
-                    verticalArrangement = Arrangement.spacedBy(4.dp)
-                ) {
-                    Text(
-                        text = "后端服务URL",
-                        fontSize = 14.sp,
-                        fontWeight = FontWeight.Medium
-                    )
-                    var backendUrlText by remember { mutableStateOf(backendUrl) }
-                    // 当backendUrl变化时更新backendUrlText
-                    LaunchedEffect(backendUrl) {
-                        backendUrlText = backendUrl
-                    }
-                    OutlinedTextField(
-                        value = backendUrlText,
-                        onValueChange = { backendUrlText = it },
-                        modifier = Modifier.fillMaxWidth(),
-                        placeholder = { Text("输入后端服务URL") },
-                        singleLine = true,
-                        supportingText = {
-                            Text("格式: http://IP:端口/api/nsfw/detect")
-                        }
-                    )
-                    Button(
-                        onClick = {
-                            if (backendUrlText.isNotEmpty() && backendUrlText != backendUrl && !isUpdatingBackend) {
-                                isUpdatingBackend = true
-                                CoroutineScope(Dispatchers.IO).launch {
-                                    try {
-                                        settingsRepository.setBackendUrl(backendUrlText)
-                                        LogUtils.i("DetectionSettings", "后端URL已更新: $backendUrlText")
-                                        backendUrl = backendUrlText
-                                        withContext(Dispatchers.Main) {
-                                            Toast.makeText(context, "后端URL已更新", Toast.LENGTH_SHORT).show()
-                                        }
-                                    } catch (e: Exception) {
-                                        LogUtils.e("DetectionSettings", "更新后端URL失败", e)
-                                    } finally {
-                                        isUpdatingBackend = false
-                                    }
-                                }
-                            }
-                        },
-                        modifier = Modifier.fillMaxWidth(),
-                        enabled = backendUrlText.isNotEmpty() && backendUrlText != backendUrl && !isUpdatingBackend
-                    ) {
-                        if (isUpdatingBackend) {
-                            CircularProgressIndicator(
-                                modifier = Modifier.size(16.dp),
-                                strokeWidth = 2.dp,
-                                color = MaterialTheme.colorScheme.onPrimary
-                            )
-                            Spacer(modifier = Modifier.width(8.dp))
-                            Text("更新中...")
-                        } else {
-                            Text("更新后端URL")
-                        }
-                    }
-                }
-
-                // 保存调试图片开关
-                Row(
-                    horizontalArrangement = Arrangement.SpaceBetween,
-                    verticalAlignment = Alignment.CenterVertically,
-                    modifier = Modifier.fillMaxWidth()
-                ) {
-                    Text(
-                        text = "保存调试图片",
-                        fontSize = 14.sp
-                    )
-                    Switch(
-                        checked = saveDebugImages,
-                        onCheckedChange = { newValue ->
-                            saveDebugImages = newValue
-                            isUpdatingBackend = true
-                            scope.launch(Dispatchers.IO) {
-                                try {
-                                    LogUtils.i("DetectionSettings", "开始保存调试图片设置: $newValue")
-                                    settingsRepository.setSaveDebugImages(newValue)
-                                    LogUtils.i("DetectionSettings", "调试图片保存状态已更新: $newValue")
-                                    withContext(Dispatchers.Main) {
-                                        Toast.makeText(context, "调试图片保存${if (newValue) "启用" else "禁用"}", Toast.LENGTH_SHORT).show()
-                                    }
-                                } catch (e: Exception) {
-                                    LogUtils.e("DetectionSettings", "更新调试图片保存状态失败", e)
-                                    withContext(Dispatchers.Main) {
-                                        Toast.makeText(context, "保存失败: ${e.message}", Toast.LENGTH_SHORT).show()
-                                        // 恢复之前的UI状态，因为保存失败
-                                        saveDebugImages = !newValue
-                                    }
-                                } finally {
-                                    isUpdatingBackend = false
-                                }
-                            }
-                        },
-                        enabled = !isUpdatingBackend
-                    )
-                }
-
-                Text(
-                    text = "说明：后端URL需指向运行nsfw-server的计算机IP地址。",
-                    fontSize = 12.sp,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    fontStyle = androidx.compose.ui.text.font.FontStyle.Italic
-                )
-            }
-
-            HorizontalDivider( // 修复：使用 HorizontalDivider 替换 Divider
-                modifier = Modifier.padding(vertical = 8.dp),
-                color = MaterialTheme.colorScheme.outline.copy(alpha = 0.2f)
-            )
-
-            Text(
-                text = "注意：更改间隔后，前台服务将自动应用新间隔；阈值更改将在下次检测时生效；后端设置更改后立即生效",
-                fontSize = 12.sp,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                fontStyle = androidx.compose.ui.text.font.FontStyle.Italic
-            )
-        }
-    }
-
-    // 无效间隔弹窗已移除
-}
-
-/**
- * 日志管理界面
- */
-@Composable
-fun LogSection(
-    onViewLogs: () -> Unit,
-    onShareLogs: () -> Unit
-) {
-    Card(
-        modifier = Modifier.fillMaxWidth(),
-        colors = CardDefaults.cardColors(
-            containerColor = MaterialTheme.colorScheme.surfaceVariant
-        )
-    ) {
-        Column(
-            modifier = Modifier.padding(16.dp),
-            verticalArrangement = Arrangement.spacedBy(16.dp)
-        ) {
-            Text(
-                text = "📋 应用日志",
-                fontSize = 18.sp,
-                fontWeight = FontWeight.Medium
-            )
-
-            Text(
-                text = "查看和分享应用日志，便于调试问题",
-                fontSize = 14.sp,
-                color = MaterialTheme.colorScheme.onSurfaceVariant
-            )
-
-            Row(
-                horizontalArrangement = Arrangement.spacedBy(12.dp),
-                modifier = Modifier.fillMaxWidth()
-            ) {
-                Button(
-                    onClick = onViewLogs,
-                    modifier = Modifier.weight(1f)
-                ) {
-                    Text("查看日志")
-                }
-
-                Button(
-                    onClick = onShareLogs,
-                    modifier = Modifier.weight(1f),
-                    colors = ButtonDefaults.buttonColors(
-                        containerColor = MaterialTheme.colorScheme.secondary
-                    )
-                ) {
-                    Text("分享日志")
-                }
+        },
+        confirmButton = {
+            Button(onClick = onDismiss) {
+                Text("关闭")
             }
         }
-    }
-}
-
-/**
- * 日志和历史记录管理部分
- */
-@Composable
-fun LogHistorySection(
-    onViewLogs: () -> Unit,
-    onViewHistory: () -> Unit,
-    onShareLogs: () -> Unit
-) {
-    Card(
-        modifier = Modifier.fillMaxWidth(),
-        colors = CardDefaults.cardColors(
-            containerColor = MaterialTheme.colorScheme.surfaceVariant
-        )
-    ) {
-        Column(
-            modifier = Modifier.padding(16.dp),
-            verticalArrangement = Arrangement.spacedBy(16.dp)
-        ) {
-            Text(
-                text = "📋 记录与日志",
-                fontSize = 18.sp,
-                fontWeight = FontWeight.Medium
-            )
-
-            Text(
-                text = "查看检测历史、应用日志和分享数据",
-                fontSize = 14.sp,
-                color = MaterialTheme.colorScheme.onSurfaceVariant
-            )
-
-            Row(
-                horizontalArrangement = Arrangement.spacedBy(12.dp),
-                modifier = Modifier.fillMaxWidth()
-            ) {
-                Button(
-                    onClick = onViewHistory,
-                    modifier = Modifier.weight(1f)
-                ) {
-                    Text("查看历史")
-                }
-
-                Button(
-                    onClick = onViewLogs,
-                    modifier = Modifier.weight(1f)
-                ) {
-                    Text("查看日志")
-                }
-
-                Button(
-                    onClick = onShareLogs,
-                    modifier = Modifier.weight(1f),
-                    colors = ButtonDefaults.buttonColors(
-                        containerColor = MaterialTheme.colorScheme.secondary
-                    )
-                ) {
-                    Text("分享日志")
-                }
-            }
-        }
-    }
+    )
 }
 
 /**

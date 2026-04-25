@@ -7,12 +7,11 @@ import com.example.direction.repository.DetectionRepository
 import com.example.direction.utils.LogUtils
 import androidx.compose.foundation.*
 import androidx.compose.foundation.layout.*
-import androidx.compose.foundation.lazy.LazyRow
-import androidx.compose.foundation.lazy.items
-import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.foundation.pager.HorizontalPager
+import androidx.compose.foundation.pager.rememberPagerState
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.ExpandLess
 import androidx.compose.material.icons.filled.ExpandMore
@@ -33,6 +32,7 @@ import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
 import kotlinx.coroutines.launch
+import androidx.compose.runtime.snapshotFlow
 import java.text.SimpleDateFormat
 import java.util.*
 
@@ -121,10 +121,12 @@ fun DetectionDetailDialog(
             LogUtils.d("DetectionDetailDialog", "跳过debug图片加载: loadedDebugImagesBitmaps.isEmpty=${loadedDebugImagesBitmaps.isEmpty()}, result.debugImages=${result.debugImages != null}, detectionRepository=${detectionRepository != null}")
         }
 
-        // 设置默认选中的调试图片（如果有）
-        if (loadedDebugImagesBitmaps.isNotEmpty() && selectedDebugImageKey == null) {
-            selectedDebugImageKey = loadedDebugImagesBitmaps.keys.firstOrNull { it.contains("yolo_detections") }
-                ?: loadedDebugImagesBitmaps.keys.first()
+        // 设置默认选中的图片（优先级：yoloHitImage > yolo_detections > screenshot > 其他）
+        val priorityOrder = listOf("yoloHitImage", "yolo_detections", "screenshot")
+        val allImageKeys = (listOfNotNull("screenshot".takeIf { loadedScreenshotBitmap != null }) + loadedDebugImagesBitmaps.keys)
+        if (allImageKeys.isNotEmpty() && selectedDebugImageKey == null) {
+            selectedDebugImageKey = priorityOrder.firstOrNull { it in allImageKeys }
+                ?: allImageKeys.first()
         }
 
         isLoading = false
@@ -254,50 +256,7 @@ fun DetectionDetailDialog(
 }
 
 /**
- * 历史记录专用的检测详情对话框（兼容现有代码）
- */
-@Composable
-fun HistoryDetectionDetailDialog(
-    result: DetectionResult,
-    onDismiss: () -> Unit,
-    onDelete: () -> Unit,
-    detectionRepository: DetectionRepository? = null,
-    onItemClick: (DetectionResult) -> Unit = {},
-    refreshKey: Int = 0
-) {
-    DetectionDetailDialog(
-        result = result,
-        onDismiss = onDismiss,
-        onDelete = onDelete,
-        detectionRepository = detectionRepository,
-        refreshKey = refreshKey
-    )
-}
-
-/**
- * 实时检测结果专用的检测详情对话框（无删除功能）
- */
-@Composable
-fun RealTimeDetectionDetailDialog(
-    result: DetectionResult,
-    screenshotBitmap: Bitmap? = null,
-    debugImagesBitmaps: Map<String, Bitmap>? = null,
-    onDismiss: () -> Unit,
-    refreshKey: Int = 0
-) {
-    DetectionDetailDialog(
-        result = result,
-        screenshotBitmap = screenshotBitmap,
-        debugImagesBitmaps = debugImagesBitmaps,
-        onDismiss = onDismiss,
-        onDelete = null,
-        detectionRepository = null,
-        refreshKey = refreshKey
-    )
-}
-
-/**
- * 图片内容区域
+ * 图片内容区域 - 单图显示，优先级：命中图片 > 检测框图片 > 原始截图
  */
 @Composable
 private fun ImageContentSection(
@@ -308,177 +267,163 @@ private fun ImageContentSection(
     onImageClick: (Bitmap, String) -> Unit,
     result: DetectionResult
 ) {
-    // 调试日志
-    LogUtils.d("ImageContentSection", "调用ImageContentSection: debugImagesBitmaps大小=${debugImagesBitmaps.size}, 键=${debugImagesBitmaps.keys}, selectedDebugImageKey=$selectedDebugImageKey")
-
     val scope = rememberCoroutineScope()
 
-    // 创建包含所有图片的列表：截图 + 调试图片
-    val allImages = mutableMapOf<String, Bitmap>()
-    // 添加截图（如果有）
-    if (screenshotBitmap != null) {
-        allImages["screenshot"] = screenshotBitmap
+    // 创建有序图片列表（优先级：yoloHitImage > yolo_detections > screenshot > 其他）
+    val priorityOrder = listOf("yoloHitImage", "yolo_detections", "screenshot")
+    val allImageMap = mutableMapOf<String, Bitmap>()
+    if (screenshotBitmap != null) allImageMap["screenshot"] = screenshotBitmap
+    allImageMap.putAll(debugImagesBitmaps)
+
+    // 按优先级排序
+    val imageKeys = allImageMap.keys.toList().sortedBy { key ->
+        val idx = priorityOrder.indexOf(key)
+        if (idx >= 0) idx else priorityOrder.size
     }
-    // 添加调试图片
-    allImages.putAll(debugImagesBitmaps)
+
+    val totalCount = imageKeys.size
+    val initialIndex = (imageKeys.indexOf(selectedDebugImageKey)).coerceIn(0, (totalCount - 1).coerceAtLeast(0))
+
+    val pagerState = rememberPagerState(
+        initialPage = initialIndex,
+        pageCount = { imageKeys.size }
+    )
+
+    // 同步页面滑动 → 更新选中图片
+    LaunchedEffect(pagerState) {
+        snapshotFlow { pagerState.currentPage }
+            .collect { page ->
+                if (imageKeys.isNotEmpty() && page < imageKeys.size) {
+                    onSelectDebugImage(imageKeys[page])
+                }
+            }
+    }
+
+    // 根据key生成中文标签
+    fun getImageLabel(key: String): String = when {
+        key == "screenshot" -> "原始截图"
+        key.contains("yoloHitImage") || (key.contains("yolo") && key.contains("hit")) -> "命中图片"
+        key.contains("yolo_detections") || (key.contains("yolo") && key.contains("detection")) -> "检测框图片"
+        key.contains("yolo") && key.contains("crop") -> "裁剪图片"
+        key.contains("yolo") -> "检测图片"
+        key.contains("preprocessed") -> "预处理图片"
+        else -> "调试图片"
+    }
 
     Column(
         modifier = Modifier.fillMaxSize(),
         verticalArrangement = Arrangement.spacedBy(12.dp)
     ) {
-        // Debug Images卡片 - 包含所有图片
         Card(
-            modifier = Modifier
-                .fillMaxWidth()
-                .fillMaxHeight(),
-            colors = CardDefaults.cardColors(
-                containerColor = MaterialTheme.colorScheme.surface
-            ),
+            modifier = Modifier.fillMaxWidth().fillMaxHeight(),
+            colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
             elevation = CardDefaults.cardElevation(defaultElevation = 4.dp)
         ) {
-            Column(
-                modifier = Modifier.fillMaxSize()
-            ) {
-                // 标题
-                Text(
-                    text = "🖼️ Debug Images",
-                    fontSize = 16.sp,
-                    fontWeight = FontWeight.Medium,
-                    modifier = Modifier.padding(start = 12.dp, top = 12.dp, bottom = 8.dp)
-                )
-
-                if (allImages.isNotEmpty()) {
-                    val imageKeys = allImages.keys.toList()
-                    val currentIndex = imageKeys.indexOf(selectedDebugImageKey).coerceAtLeast(0)
-                    val lazyListState = rememberLazyListState(initialFirstVisibleItemIndex = currentIndex)
-
-                    // 监听滑动位置变化，更新选中的图片
-                    LaunchedEffect(lazyListState.firstVisibleItemIndex) {
-                        val newIndex = lazyListState.firstVisibleItemIndex
-                        if (newIndex in imageKeys.indices) {
-                            val newKey = imageKeys[newIndex]
-                            if (newKey != selectedDebugImageKey) {
-                                onSelectDebugImage(newKey)
-                            }
+            Column(modifier = Modifier.fillMaxSize()) {
+                // 标题 + 计数
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(start = 12.dp, top = 12.dp, end = 12.dp, bottom = 8.dp),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text("检测图片", fontSize = 16.sp, fontWeight = FontWeight.Medium)
+                    if (totalCount > 0) {
+                        Surface(
+                            shape = RoundedCornerShape(12.dp),
+                            color = MaterialTheme.colorScheme.primaryContainer
+                        ) {
+                            Text(
+                                text = "${pagerState.currentPage + 1}/$totalCount 张",
+                                fontSize = 12.sp,
+                                modifier = Modifier.padding(horizontal = 10.dp, vertical = 4.dp),
+                                color = MaterialTheme.colorScheme.onPrimaryContainer
+                            )
                         }
                     }
+                }
 
-                    Column(
-                        modifier = Modifier.fillMaxSize()
-                    ) {
-                        // 图片水平滑动列表
-                        LazyRow(
-                            state = lazyListState,
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .weight(1f),
-                            horizontalArrangement = Arrangement.spacedBy(0.dp)
-                        ) {
-                            items(imageKeys.size) { index ->
-                                val key = imageKeys[index]
-                                val bitmap = allImages[key]!!
-                                val description = when {
-                                    key == "screenshot" -> {
-                                        val screenshotType = if (result.hasOriginalScreenshot) "原始分辨率" else "缩略图"
-                                        "检测截图 - $screenshotType"
-                                    }
-                                    key.contains("yolo") && key.contains("detection") -> "YOLO检测图片（带检测框）"
-                                    key.contains("yolo") && key.contains("hit") -> "YOLO裁剪区域图片"
-                                    key.contains("yolo") && key.contains("crop") -> "YOLO裁剪区域图片"
-                                    key.contains("yolo") && key.contains("union") -> "YOLO联合框图片"
-                                    key.contains("yolo") -> "YOLO图片"
-                                    else -> "调试图片"
-                                }
-
-                                Box(
-                                    modifier = Modifier
-                                        .fillMaxSize()
-                                        .padding(horizontal = 8.dp, vertical = 4.dp)
-                                        .clip(RoundedCornerShape(12.dp))
-                                        .clickable {
-                                            onImageClick(bitmap, description)
-                                        },
-                                    contentAlignment = Alignment.Center
-                                ) {
+                if (totalCount > 0) {
+                    Box(modifier = Modifier.fillMaxSize()) {
+                        // 左右滑动翻页
+                        HorizontalPager(
+                            state = pagerState,
+                            modifier = Modifier.fillMaxSize()
+                        ) { page ->
+                            val key = imageKeys[page]
+                            val bitmap = allImageMap[key]
+                            if (bitmap != null) {
+                                Box(modifier = Modifier.fillMaxSize()) {
                                     Image(
                                         bitmap = bitmap.asImageBitmap(),
-                                        contentDescription = description,
-                                        modifier = Modifier.fillMaxSize(),
+                                        contentDescription = getImageLabel(key),
+                                        modifier = Modifier
+                                            .fillMaxSize()
+                                            .clip(RoundedCornerShape(8.dp))
+                                            .clickable { onImageClick(bitmap, getImageLabel(key)) }
+                                            .padding(horizontal = 8.dp, vertical = 4.dp),
                                         contentScale = ContentScale.Fit
                                     )
 
-                                    // 图片信息
+                                    // 图片标签（左上）
                                     Text(
-                                        text = "${bitmap.width}×${bitmap.height}",
-                                        fontSize = 10.sp,
-                                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                        modifier = Modifier
-                                            .align(Alignment.BottomEnd)
-                                            .padding(4.dp)
-                                            .background(
-                                                MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.8f),
-                                                RoundedCornerShape(4.dp)
-                                            )
-                                            .padding(horizontal = 6.dp, vertical = 2.dp)
-                                    )
-
-                                    // 图片标签
-                                    Text(
-                                        text = description,
+                                        text = getImageLabel(key),
                                         fontSize = 12.sp,
-                                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                        color = Color.White,
                                         fontWeight = FontWeight.Medium,
                                         modifier = Modifier
                                             .align(Alignment.TopStart)
-                                            .padding(8.dp)
-                                            .background(
-                                                MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.8f),
-                                                RoundedCornerShape(4.dp)
-                                            )
+                                            .padding(12.dp)
+                                            .background(Color.Black.copy(alpha = 0.6f), RoundedCornerShape(4.dp))
                                             .padding(horizontal = 8.dp, vertical = 4.dp)
+                                    )
+
+                                    // 分辨率（右下）
+                                    Text(
+                                        text = "${bitmap.width}×${bitmap.height}",
+                                        fontSize = 10.sp,
+                                        color = Color.White,
+                                        modifier = Modifier
+                                            .align(Alignment.BottomEnd)
+                                            .padding(12.dp)
+                                            .background(Color.Black.copy(alpha = 0.6f), RoundedCornerShape(4.dp))
+                                            .padding(horizontal = 6.dp, vertical = 2.dp)
                                     )
                                 }
                             }
                         }
 
-                        // 指示器
-                        Row(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .padding(vertical = 8.dp),
-                            horizontalArrangement = Arrangement.Center
-                        ) {
-                            imageKeys.forEachIndexed { index, key ->
-                                Box(
-                                    modifier = Modifier
-                                        .size(8.dp)
-                                        .clip(CircleShape)
-                                        .background(
-                                            if (index == currentIndex)
-                                                MaterialTheme.colorScheme.primary
-                                            else
-                                                MaterialTheme.colorScheme.surfaceVariant
-                                        )
-                                        .padding(2.dp)
-                                        .clickable {
-                                            // 点击指示器跳转到对应图片
-                                            onSelectDebugImage(key)
-                                            scope.launch {
-                                                lazyListState.animateScrollToItem(index)
+                        // 底部指示点
+                        if (totalCount > 1) {
+                            Row(
+                                modifier = Modifier
+                                    .align(Alignment.BottomCenter)
+                                    .padding(bottom = 16.dp),
+                                horizontalArrangement = Arrangement.Center
+                            ) {
+                                imageKeys.forEachIndexed { index, key ->
+                                    Box(
+                                        modifier = Modifier
+                                            .size(6.dp)
+                                            .clip(CircleShape)
+                                            .background(
+                                                if (index == pagerState.currentPage) MaterialTheme.colorScheme.primary
+                                                else Color.White.copy(alpha = 0.5f)
+                                            )
+                                            .clickable {
+                                                scope.launch { pagerState.animateScrollToPage(index) }
                                             }
-                                        }
-                                )
-                                if (index < imageKeys.size - 1) {
-                                    Spacer(modifier = Modifier.width(4.dp))
+                                    )
+                                    if (index < imageKeys.size - 1) {
+                                        Spacer(modifier = Modifier.width(4.dp))
+                                    }
                                 }
                             }
                         }
                     }
                 } else {
-                    Box(
-                        modifier = Modifier.fillMaxSize(),
-                        contentAlignment = Alignment.Center
-                    ) {
+                    Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
                         Text("无图片", fontSize = 16.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
                     }
                 }
@@ -488,7 +433,7 @@ private fun ImageContentSection(
 }
 
 /**
- * 结果内容区域
+ * 结果内容区域 - 全中文显示
  */
 @Composable
 private fun ResultContentSection(
@@ -497,196 +442,171 @@ private fun ResultContentSection(
     onDelete: () -> Unit,
     onDismiss: () -> Unit
 ) {
-    // 参考debug-ui.html的颜色方案
-    val nsfwRed = Color(0xFFff4757)
-    val safeGreen = Color(0xFF2ed573)
-    val primaryBlue = Color(0xFF00adb5)
-    val warningYellow = Color(0xFFffa502)
-    val cardBackground = Color(0xFF2a2a3e)
-    val surfaceDark = Color(0xFF1a1a2e)
-    val textPrimary = Color(0xFFe6e6e6)
-    val textSecondary = Color(0xFFb0b0b0)
-    val borderColor = Color(0xFF393e46)
-
     // 折叠状态
     var localDetailsExpanded by remember { mutableStateOf(false) }
     var remoteDetailsExpanded by remember { mutableStateOf(false) }
 
-    // 添加调试日志
-    SideEffect {
-        LogUtils.d("ResultContentSection", "YOLO结果状态: ${result.yoloResult != null}")
-        LogUtils.d("ResultContentSection", "YOLO结果详情: ${result.yoloResult}")
-        LogUtils.d("ResultContentSection", "调试图片数量: ${debugImagesBitmaps.size}, 键: ${debugImagesBitmaps.keys}")
-        LogUtils.d("ResultContentSection", "原始debugImages: ${result.debugImages?.keys}")
-        LogUtils.d("ResultContentSection", "modelOutput: ${result.modelOutput?.take(100)}...")
-        LogUtils.d("ResultContentSection", "backendConfidence: ${result.backendConfidence}, backendIsNsfw: ${result.backendIsNsfw}")
+    // 分类名翻译
+    fun translateCategory(category: String): String = when (category.lowercase()) {
+        "drawing" -> "绘画"
+        "hentai" -> "色情动漫"
+        "neutral" -> "正常"
+        "porn" -> "色情"
+        "sexy" -> "性感"
+        "nsfw" -> "NSFW"
+        "sfw" -> "安全"
+        else -> category
     }
 
     Column(
         modifier = Modifier.fillMaxWidth(),
-        verticalArrangement = Arrangement.spacedBy(16.dp)
+        verticalArrangement = Arrangement.spacedBy(12.dp)
     ) {
-        // 主结果卡片 - 参考debug-ui.html的result-card设计
+        // ========== 主结果卡片 ==========
         Card(
             modifier = Modifier.fillMaxWidth(),
-            colors = CardDefaults.cardColors(
-                containerColor = cardBackground
-            ),
-            elevation = CardDefaults.cardElevation(defaultElevation = 8.dp),
-            border = BorderStroke(
-                width = 1.dp,
-                color = borderColor
-            )
+            colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+            elevation = CardDefaults.cardElevation(defaultElevation = 6.dp),
         ) {
-            // 左侧边框颜色表示状态（NSFW红色，安全绿色）
             Box(modifier = Modifier.fillMaxWidth()) {
-                // 左侧状态条
+                // 左侧结果色条
                 Box(
                     modifier = Modifier
                         .fillMaxHeight()
-                        .width(5.dp)
-                        .background(if (result.isNSFW) nsfwRed else safeGreen)
+                        .width(6.dp)
+                        .background(
+                            if (result.isNSFW) MaterialTheme.colorScheme.error
+                            else MaterialTheme.colorScheme.secondary
+                        )
                 )
-
                 Column(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(start = 20.dp, top = 16.dp, end = 16.dp, bottom = 16.dp),
-                    verticalArrangement = Arrangement.spacedBy(12.dp)
+                    modifier = Modifier.fillMaxWidth().padding(start = 20.dp, top = 16.dp, end = 16.dp, bottom = 16.dp),
+                    verticalArrangement = Arrangement.spacedBy(10.dp)
                 ) {
-                    // 结果头部 - 参考debug-ui.html的result-header
+                    // 状态徽章 + 标题
                     Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.Start,
-                        verticalAlignment = Alignment.CenterVertically
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(10.dp)
                     ) {
-                        // 状态
+                        // 药丸形状态徽章
+                        Surface(
+                            shape = RoundedCornerShape(12.dp),
+                            color = if (result.isNSFW)
+                                MaterialTheme.colorScheme.error.copy(alpha = 0.15f)
+                            else
+                                MaterialTheme.colorScheme.secondary.copy(alpha = 0.15f)
+                        ) {
+                            Text(
+                                text = if (result.isNSFW) "不适宜" else "安全",
+                                fontSize = 12.sp,
+                                fontWeight = FontWeight.Bold,
+                                color = if (result.isNSFW) MaterialTheme.colorScheme.error
+                                else MaterialTheme.colorScheme.secondary,
+                                modifier = Modifier.padding(horizontal = 10.dp, vertical = 4.dp)
+                            )
+                        }
                         Text(
-                            text = if (result.isNSFW) "🚨 NSFW DETECTED" else "✅ SAFE CONTENT",
-                            fontSize = 18.sp,
+                            text = "检测结果",
+                            fontSize = 16.sp,
                             fontWeight = FontWeight.Bold,
-                            color = if (result.isNSFW) nsfwRed else safeGreen
+                            color = MaterialTheme.colorScheme.onSurface
                         )
                     }
 
-                    // 总体结果描述 - 参考debug-ui.html的Overall Result
-                    Column(
-                        verticalArrangement = Arrangement.spacedBy(8.dp)
-                    ) {
-                        Text(
-                            text = "Overall Result",
-                            fontSize = 14.sp,
-                            fontWeight = FontWeight.SemiBold,
-                            color = textSecondary
-                        )
-                        Text(
-                            text = if (result.isNSFW) "Not Safe For Work content detected" else "Safe For Work content",
-                            fontSize = 15.sp,
-                            color = textPrimary
-                        )
-                    }
+                    // 结果说明
+                    val backendNote = if (result.backendIsNsfw == true) "（后端辅助判定）" else ""
+                    Text(
+                        text = if (result.isNSFW) "检测到不适宜内容，请注意$backendNote" else "当前屏幕内容安全$backendNote",
+                        fontSize = 13.sp,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
 
-                    // 时间戳
+                    // 时间
                     Text(
                         text = SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.getDefault()).format(Date(result.timestamp)),
                         fontSize = 12.sp,
-                        color = textSecondary
+                        color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.6f)
                     )
                 }
             }
         }
 
-        // 本地检测详情卡片（可折叠）
+        // ========== 本地检测详情卡片（可折叠） ==========
         Card(
             modifier = Modifier.fillMaxWidth(),
-            colors = CardDefaults.cardColors(
-                containerColor = cardBackground
-            ),
+            colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
             elevation = CardDefaults.cardElevation(defaultElevation = 4.dp),
-            border = BorderStroke(
-                width = 1.dp,
-                color = borderColor
-            )
         ) {
             Column(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(12.dp),
-                verticalArrangement = Arrangement.spacedBy(12.dp)
+                modifier = Modifier.fillMaxWidth().padding(12.dp),
+                verticalArrangement = Arrangement.spacedBy(8.dp)
             ) {
-                // 折叠标题
+                // 折叠标题 - 整行可点击
                 Row(
-                    modifier = Modifier.fillMaxWidth(),
+                    modifier = Modifier.fillMaxWidth().clickable { localDetailsExpanded = !localDetailsExpanded },
                     horizontalArrangement = Arrangement.SpaceBetween,
                     verticalAlignment = Alignment.CenterVertically
                 ) {
-                    Text(
-                        text = "📱 Local Detection",
-                        fontSize = 15.sp,
-                        fontWeight = FontWeight.Medium,
-                        color = textPrimary
-                    )
-                    IconButton(
-                        onClick = { localDetailsExpanded = !localDetailsExpanded },
-                        modifier = Modifier.size(24.dp)
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
                     ) {
-                        Icon(
-                            imageVector = if (localDetailsExpanded) Icons.Default.ExpandLess else Icons.Default.ExpandMore,
-                            contentDescription = if (localDetailsExpanded) "收起" else "展开",
-                            tint = textSecondary
+                        // 标题左侧小色条
+                        Box(
+                            modifier = Modifier
+                                .width(3.dp)
+                                .height(16.dp)
+                                .background(MaterialTheme.colorScheme.primary, RoundedCornerShape(2.dp))
                         )
+                        Text("本地检测", fontSize = 14.sp, fontWeight = FontWeight.SemiBold, color = MaterialTheme.colorScheme.onSurface)
                     }
+                    Icon(
+                        imageVector = if (localDetailsExpanded) Icons.Default.ExpandLess else Icons.Default.ExpandMore,
+                        contentDescription = if (localDetailsExpanded) "收起" else "展开",
+                        tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.size(24.dp)
+                    )
                 }
 
                 if (localDetailsExpanded) {
-                    // 本地检测详情内容
-                    Column(
-                        verticalArrangement = Arrangement.spacedBy(8.dp)
+                    // 数据区域 - 使用浅色背景卡片内嵌
+                    Surface(
+                        modifier = Modifier.fillMaxWidth(),
+                        color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.3f),
+                        shape = RoundedCornerShape(8.dp)
                     ) {
-                        // 置信度
-                        Row(
-                            modifier = Modifier.fillMaxWidth(),
-                            horizontalArrangement = Arrangement.SpaceBetween
+                        Column(
+                            modifier = Modifier.padding(12.dp),
+                            verticalArrangement = Arrangement.spacedBy(8.dp)
                         ) {
-                            Text("Confidence", fontSize = 13.sp, color = textSecondary)
-                            Text(
-                                text = String.format("%.1f%%", result.confidence * 100),
-                                fontSize = 13.sp,
-                                fontWeight = FontWeight.Medium,
-                                color = primaryBlue
-                            )
-                        }
+                            // 置信度
+                            DataRow("置信度", String.format("%.1f%%", result.confidence * 100), MaterialTheme.colorScheme.primary)
 
-                        // 阈值
-                        Row(
-                            modifier = Modifier.fillMaxWidth(),
-                            horizontalArrangement = Arrangement.SpaceBetween
-                        ) {
-                            Text("Threshold", fontSize = 13.sp, color = textSecondary)
-                            Text(
-                                text = String.format("%.2f", result.threshold),
-                                fontSize = 13.sp,
-                                color = textSecondary
-                            )
-                        }
+                            // 阈值
+                            DataRow("阈值", String.format("%.0f%%", result.threshold * 100), MaterialTheme.colorScheme.onSurfaceVariant)
 
-                        // 原始分类分数（如果有）
-                        if (result.rawScores.isNotEmpty()) {
-                            Column(
-                                verticalArrangement = Arrangement.spacedBy(4.dp)
-                            ) {
-                                Text("Raw Scores", fontSize = 12.sp, color = textSecondary)
-                                result.rawScores.forEach { (category, score) ->
-                                    Row(
-                                        modifier = Modifier.fillMaxWidth(),
-                                        horizontalArrangement = Arrangement.SpaceBetween
-                                    ) {
-                                        Text(category, fontSize = 11.sp, color = textSecondary)
-                                        Text(
-                                            text = String.format("%.1f%%", score * 100),
-                                            fontSize = 11.sp,
-                                            color = primaryBlue
-                                        )
+                            // 原始分类分数（带缩进）
+                            if (result.rawScores.isNotEmpty()) {
+                                Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                                    Text(
+                                        "原始分数",
+                                        fontSize = 11.sp,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                        fontWeight = FontWeight.Medium
+                                    )
+                                    result.rawScores.forEach { (category, score) ->
+                                        Row(
+                                            modifier = Modifier.fillMaxWidth().padding(start = 8.dp),
+                                            horizontalArrangement = Arrangement.SpaceBetween,
+                                            verticalAlignment = Alignment.CenterVertically
+                                        ) {
+                                            Text(translateCategory(category), fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                            Text(
+                                                text = String.format("%.1f%%", score * 100),
+                                                fontSize = 12.sp,
+                                                color = MaterialTheme.colorScheme.primary
+                                            )
+                                        }
                                     }
                                 }
                             }
@@ -696,186 +616,135 @@ private fun ResultContentSection(
             }
         }
 
-        // 后端检测详情卡片（如果有后端结果）
+        // ========== 远程检测详情卡片（如果有后端结果） ==========
         if (result.backendIsNsfw != null || result.backendConfidence != null || result.modelOutput != null) {
             Card(
                 modifier = Modifier.fillMaxWidth(),
-                colors = CardDefaults.cardColors(
-                    containerColor = cardBackground
-                ),
+                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
                 elevation = CardDefaults.cardElevation(defaultElevation = 4.dp),
-                border = BorderStroke(
-                    width = 1.dp,
-                    color = borderColor
-                )
             ) {
                 Column(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(12.dp),
-                    verticalArrangement = Arrangement.spacedBy(12.dp)
+                    modifier = Modifier.fillMaxWidth().padding(12.dp),
+                    verticalArrangement = Arrangement.spacedBy(8.dp)
                 ) {
-                    // 折叠标题
+                    // 折叠标题 - 整行可点击
                     Row(
-                        modifier = Modifier.fillMaxWidth(),
+                        modifier = Modifier.fillMaxWidth().clickable { remoteDetailsExpanded = !remoteDetailsExpanded },
                         horizontalArrangement = Arrangement.SpaceBetween,
                         verticalAlignment = Alignment.CenterVertically
                     ) {
-                        Text(
-                            text = "🌐 Remote Detection",
-                            fontSize = 15.sp,
-                            fontWeight = FontWeight.Medium,
-                            color = textPrimary
-                        )
-                        IconButton(
-                            onClick = { remoteDetailsExpanded = !remoteDetailsExpanded },
-                            modifier = Modifier.size(24.dp)
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(8.dp)
                         ) {
-                            Icon(
-                                imageVector = if (remoteDetailsExpanded) Icons.Default.ExpandLess else Icons.Default.ExpandMore,
-                                contentDescription = if (remoteDetailsExpanded) "收起" else "展开",
-                                tint = textSecondary
+                            Box(
+                                modifier = Modifier
+                                    .width(3.dp)
+                                    .height(16.dp)
+                                    .background(MaterialTheme.colorScheme.primary, RoundedCornerShape(2.dp))
                             )
+                            Text("远程检测", fontSize = 14.sp, fontWeight = FontWeight.SemiBold, color = MaterialTheme.colorScheme.onSurface)
                         }
+                        Icon(
+                            imageVector = if (remoteDetailsExpanded) Icons.Default.ExpandLess else Icons.Default.ExpandMore,
+                            contentDescription = if (remoteDetailsExpanded) "收起" else "展开",
+                            tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                            modifier = Modifier.size(24.dp)
+                        )
                     }
 
                     if (remoteDetailsExpanded) {
-                        // 后端检测详情内容
-                        Column(
-                            verticalArrangement = Arrangement.spacedBy(8.dp)
+                        Surface(
+                            modifier = Modifier.fillMaxWidth(),
+                            color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.3f),
+                            shape = RoundedCornerShape(8.dp)
                         ) {
-                            // 后端检测结果
-                            if (result.backendIsNsfw != null) {
-                                Row(
-                                    modifier = Modifier.fillMaxWidth(),
-                                    horizontalArrangement = Arrangement.SpaceBetween
-                                ) {
-                                    Text("Detection", fontSize = 13.sp, color = textSecondary)
-                                    Text(
-                                        text = if (result.backendIsNsfw == true) "NSFW 🔴" else "SFW 🟢",
-                                        fontSize = 13.sp,
-                                        fontWeight = FontWeight.Medium,
-                                        color = if (result.backendIsNsfw == true) nsfwRed else safeGreen
+                            Column(
+                                modifier = Modifier.padding(12.dp),
+                                verticalArrangement = Arrangement.spacedBy(8.dp)
+                            ) {
+                                // 检测结果
+                                if (result.backendIsNsfw != null) {
+                                    DataRow(
+                                        "检测结果",
+                                        if (result.backendIsNsfw == true) "不适宜内容" else "内容安全",
+                                        if (result.backendIsNsfw == true) MaterialTheme.colorScheme.error
+                                        else MaterialTheme.colorScheme.secondary
                                     )
                                 }
-                            }
 
-                            // 后端置信度
-                            if (result.backendConfidence != null) {
-                                Row(
-                                    modifier = Modifier.fillMaxWidth(),
-                                    horizontalArrangement = Arrangement.SpaceBetween
-                                ) {
-                                    Text("Confidence", fontSize = 13.sp, color = textSecondary)
-                                    Text(
-                                        text = String.format("%.1f%%", result.backendConfidence * 100),
-                                        fontSize = 13.sp,
-                                        fontWeight = FontWeight.Medium,
-                                        color = primaryBlue
-                                    )
+                                // 置信度
+                                if (result.backendConfidence != null) {
+                                    DataRow("置信度", String.format("%.1f%%", result.backendConfidence * 100), MaterialTheme.colorScheme.primary)
                                 }
-                            }
 
-                            // 后端原始分数（如果有）
-                            if (result.backendRawScores != null && result.backendRawScores.isNotEmpty()) {
-                                Column(
-                                    verticalArrangement = Arrangement.spacedBy(4.dp)
-                                ) {
-                                    Text("Raw Scores", fontSize = 12.sp, color = textSecondary)
-                                    result.backendRawScores.forEach { (category, score) ->
-                                        Row(
-                                            modifier = Modifier.fillMaxWidth(),
-                                            horizontalArrangement = Arrangement.SpaceBetween
-                                        ) {
-                                            Text(category, fontSize = 11.sp, color = textSecondary)
-                                            Text(
-                                                text = String.format("%.1f%%", score * 100),
-                                                fontSize = 11.sp,
-                                                color = primaryBlue
-                                            )
+                                // 后端原始分数（带缩进）
+                                if (result.backendRawScores != null && result.backendRawScores.isNotEmpty()) {
+                                    Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                                        Text(
+                                            "原始分数",
+                                            fontSize = 11.sp,
+                                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                            fontWeight = FontWeight.Medium
+                                        )
+                                        result.backendRawScores.forEach { (category, score) ->
+                                            Row(
+                                                modifier = Modifier.fillMaxWidth().padding(start = 8.dp),
+                                                horizontalArrangement = Arrangement.SpaceBetween,
+                                                verticalAlignment = Alignment.CenterVertically
+                                            ) {
+                                                Text(translateCategory(category), fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                                Text(
+                                                    text = String.format("%.1f%%", score * 100),
+                                                    fontSize = 12.sp,
+                                                    color = MaterialTheme.colorScheme.primary
+                                                )
+                                            }
                                         }
                                     }
                                 }
-                            }
 
-                            // YOLO结果（如果有）
-                            if (result.yoloResult != null) {
-                                Column(
-                                    verticalArrangement = Arrangement.spacedBy(8.dp)
-                                ) {
-                                    Text("🎯 YOLO Detection", fontSize = 13.sp, fontWeight = FontWeight.Medium, color = textPrimary)
-
-                                    Row(
-                                        modifier = Modifier.fillMaxWidth(),
-                                        horizontalArrangement = Arrangement.SpaceBetween
-                                    ) {
-                                        Text("Triggered", fontSize = 12.sp, color = textSecondary)
+                                // YOLO物体检测结果（精简）
+                                if (result.yoloResult != null) {
+                                    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                                         Text(
-                                            text = if (result.yoloResult.triggered) "Yes" else "No",
+                                            "物体检测",
+                                            fontSize = 13.sp,
+                                            fontWeight = FontWeight.Medium,
+                                            color = MaterialTheme.colorScheme.onSurface
+                                        )
+
+                                        DataRow(
+                                            "触发检测",
+                                            if (result.yoloResult.triggered) "是" else "否",
+                                            if (result.yoloResult.triggered) MaterialTheme.colorScheme.primary
+                                            else MaterialTheme.colorScheme.onSurfaceVariant
+                                        )
+
+                                        if (result.yoloResult.detectedObjects) {
+                                            DataRow("检测到目标", "是", MaterialTheme.colorScheme.tertiary)
+                                        }
+                                    }
+                                }
+
+                                // 模型输出
+                                if (result.modelOutput != null && result.modelOutput.isNotBlank()) {
+                                    Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                                        Text(
+                                            "模型输出",
                                             fontSize = 12.sp,
-                                            color = if (result.yoloResult.triggered) primaryBlue else textSecondary
+                                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                                        )
+                                        Text(
+                                            text = result.modelOutput.take(200) + if (result.modelOutput.length > 200) "..." else "",
+                                            fontSize = 10.sp,
+                                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                            modifier = Modifier
+                                                .fillMaxWidth()
+                                                .background(MaterialTheme.colorScheme.background, RoundedCornerShape(4.dp))
+                                                .padding(8.dp)
                                         )
                                     }
-
-                                    if (result.yoloResult.detectedObjects) {
-                                        Row(
-                                            modifier = Modifier.fillMaxWidth(),
-                                            horizontalArrangement = Arrangement.SpaceBetween
-                                        ) {
-                                            Text("Objects Detected", fontSize = 12.sp, color = textSecondary)
-                                            Text(
-                                                text = "Yes",
-                                                fontSize = 12.sp,
-                                                color = warningYellow
-                                            )
-                                        }
-
-                                        if (result.yoloResult.unionBox != null) {
-                                            Row(
-                                                modifier = Modifier.fillMaxWidth(),
-                                                horizontalArrangement = Arrangement.SpaceBetween
-                                            ) {
-                                                Text("Union Box", fontSize = 12.sp, color = textSecondary)
-                                                Text(
-                                                    text = result.yoloResult.unionBox,
-                                                    fontSize = 10.sp,
-                                                    color = textSecondary
-                                                )
-                                            }
-                                        }
-
-                                        if (result.yoloResult.backendIsNsfw != null) {
-                                            Row(
-                                                modifier = Modifier.fillMaxWidth(),
-                                                horizontalArrangement = Arrangement.SpaceBetween
-                                            ) {
-                                                Text("Crop Result", fontSize = 12.sp, color = textSecondary)
-                                                Text(
-                                                    text = if (result.yoloResult.backendIsNsfw == true) "NSFW" else "SFW",
-                                                    fontSize = 12.sp,
-                                                    color = if (result.yoloResult.backendIsNsfw == true) nsfwRed else safeGreen
-                                                )
-                                            }
-                                        }
-                                    }
-                                }
-                            }
-
-                            // 模型输出（如果有）
-                            if (result.modelOutput != null && result.modelOutput.isNotBlank()) {
-                                Column(
-                                    verticalArrangement = Arrangement.spacedBy(4.dp)
-                                ) {
-                                    Text("Model Output", fontSize = 12.sp, color = textSecondary)
-                                    Text(
-                                        text = result.modelOutput.take(200) + if (result.modelOutput.length > 200) "..." else "",
-                                        fontSize = 10.sp,
-                                        color = textSecondary,
-                                        modifier = Modifier
-                                            .fillMaxWidth()
-                                            .background(surfaceDark, RoundedCornerShape(4.dp))
-                                            .padding(8.dp)
-                                    )
                                 }
                             }
                         }
@@ -884,12 +753,11 @@ private fun ResultContentSection(
             }
         }
 
-        // 操作按钮
+        // ========== 底部操作按钮 ==========
         Row(
             modifier = Modifier.fillMaxWidth(),
             horizontalArrangement = Arrangement.SpaceBetween
         ) {
-            // 删除按钮（仅当onDelete不为空时显示）
             if (onDelete != {}) {
                 Button(
                     onClick = onDelete,
@@ -903,11 +771,22 @@ private fun ResultContentSection(
                     Text("删除")
                 }
             }
-
-            // 关闭按钮
-            Button(onClick = onDismiss) {
-                Text("关闭")
-            }
+            Button(onClick = onDismiss) { Text("关闭") }
         }
+    }
+}
+
+/**
+ * 数据行组件 - 用于显示标签+值的键值对
+ */
+@Composable
+private fun DataRow(label: String, value: String, valueColor: Color = MaterialTheme.colorScheme.primary) {
+    Row(
+        modifier = Modifier.fillMaxWidth(),
+        horizontalArrangement = Arrangement.SpaceBetween,
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Text(label, fontSize = 13.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        Text(value, fontSize = 13.sp, fontWeight = FontWeight.Medium, color = valueColor)
     }
 }

@@ -570,7 +570,21 @@ class NsfwMonitorService : Service() {
                         true // 默认启用
                     }
 
-                    LogUtils.d(TAG, "通知设置: enabled=$notificationEnabled, 震动设置: enabled=$vibrationEnabled")
+                    val soundEnabled = try {
+                        settingsRepository.soundEnabled.first()
+                    } catch (e: Exception) {
+                        LogUtils.e(TAG, "读取声音设置失败，使用默认值", e)
+                        true // 默认启用
+                    }
+
+                    val showDetail = try {
+                        settingsRepository.bringToForeground.first()
+                    } catch (e: Exception) {
+                        LogUtils.e(TAG, "读取回到主页设置失败，使用默认值", e)
+                        false
+                    }
+
+                    LogUtils.d(TAG, "通知设置: enabled=$notificationEnabled, 震动: $vibrationEnabled, 声音: $soundEnabled, 详情页: $showDetail")
 
                     // 震动和通知独立执行，互不影响
                     if (vibrationEnabled) {
@@ -592,7 +606,7 @@ class NsfwMonitorService : Service() {
                         // 在独立协程中发送通知，避免阻塞震动
                         CoroutineScope(Dispatchers.IO).launch {
                             try {
-                                notificationUtils.sendDetectionNotification(finalResult, enableVibration = false)
+                                notificationUtils.sendDetectionNotification(finalResult, enableVibration = false, enableSound = soundEnabled)
                             } catch (e: Exception) {
                                 LogUtils.e(TAG, "通知发送失败", e)
                             }
@@ -611,7 +625,7 @@ class NsfwMonitorService : Service() {
 
                     // 展示检测结果详情页（不释放录屏，服务继续运行）
                     if (tempScreenshotFile.exists()) {
-                        showDetectionResult(finalResult, tempScreenshotFile.absolutePath)
+                        showDetectionResult(finalResult, tempScreenshotFile.absolutePath, showDetail)
                     }
                 } else {
                     LogUtils.i(TAG, "SFW内容，不发送通知")
@@ -763,14 +777,16 @@ class NsfwMonitorService : Service() {
      * 展示检测结果详情页
      * 不释放录屏，服务继续运行
      */
-    private fun showDetectionResult(result: DetectionResult, screenshotPath: String) {
+    private fun showDetectionResult(result: DetectionResult, screenshotPath: String, showDetail: Boolean = true) {
         try {
-            LogUtils.i(TAG, "展示检测结果详情页")
+            if (!showDetail) {
+                LogUtils.i(TAG, "回到详情页已禁用，不打开任何页面")
+                return
+            }
 
-            // 使用清理过的result（移大幅字段，避免Intent过大）
+            LogUtils.i(TAG, "展示检测结果详情页")
             val cleanedResult = result.createCleanedCopy()
             val gson = Gson()
-
             val intent = Intent(this, DetectionResultActivity::class.java).apply {
                 putExtra(DetectionResultActivity.EXTRA_DETECTION_RESULT_JSON, gson.toJson(cleanedResult))
                 putExtra(DetectionResultActivity.EXTRA_SCREENSHOT_PATH, screenshotPath)
@@ -825,31 +841,6 @@ class NsfwMonitorService : Service() {
             LogUtils.e(TAG, "后端兜底检测失败", e)
             null
         }
-    }
-
-    /**
-     * 检查是否需要兜底检测
-     * @param androidResult 本地Android检测结果
-     * @param thresholdMargin 阈值容差（当前未使用，但保留参数以保持兼容性）
-     * @return 如果需要兜底返回true
-     */
-    private fun shouldFallbackToBackend(
-        androidResult: DetectionResult,
-        thresholdMargin: Float
-    ): Boolean {
-        // 如果Android检测结果有错误，则兜底
-        if (androidResult.error != null) {
-            LogUtils.d(TAG, "Android检测有错误，需要后端兜底")
-            return true
-        }
-        // 只要前台检测结果为SFW（isNSFW为false）就开启后端检测
-        val shouldFallback = !androidResult.isNSFW
-        if (shouldFallback) {
-            LogUtils.d(TAG, "Android检测结果为SFW（isNSFW=false），需要后端兜底验证")
-        } else {
-            LogUtils.d(TAG, "Android检测结果为NSFW（isNSFW=true），不需要后端兜底")
-        }
-        return shouldFallback
     }
 
     /**

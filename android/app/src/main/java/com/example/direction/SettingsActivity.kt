@@ -1,10 +1,8 @@
 package com.example.direction
 
 import android.Manifest
-import android.content.Intent
 import android.os.Build
 import android.os.Bundle
-import android.provider.Settings
 import android.widget.Toast
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
@@ -15,12 +13,10 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
-import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
@@ -33,7 +29,6 @@ import com.example.direction.repository.SettingsRepository
 import com.example.direction.ui.theme.DirectionTheme
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
-import kotlinx.coroutines.runBlocking
 
 /**
  * 设置页面
@@ -99,11 +94,6 @@ class SettingsViewModel(private val settingsRepository: SettingsRepository) : Vi
     }
 
     // 检测设置
-    val isDetectionEnabled = settingsRepository.isDetectionEnabled
-    suspend fun setDetectionEnabled(enabled: Boolean) {
-        settingsRepository.setDetectionEnabled(enabled)
-    }
-
     val detectionInterval = settingsRepository.detectionInterval
     suspend fun setDetectionInterval(minutes: Int) {
         settingsRepository.setDetectionInterval(minutes)
@@ -132,19 +122,21 @@ class SettingsViewModel(private val settingsRepository: SettingsRepository) : Vi
         settingsRepository.setFloatingWindowShowWarning(showWarning)
     }
 
+    // 回到主页设置
+    val bringToForeground = settingsRepository.bringToForeground
+    suspend fun setBringToForeground(enabled: Boolean) {
+        settingsRepository.setBringToForeground(enabled)
+    }
+
     // 后端设置
     val backendEnabled = settingsRepository.backendEnabled
     val backendUrl = settingsRepository.backendUrl
-    val backendFallbackThresholdMargin = settingsRepository.backendFallbackThresholdMargin
     val saveDebugImages = settingsRepository.saveDebugImages
     suspend fun setBackendEnabled(enabled: Boolean) {
         settingsRepository.setBackendEnabled(enabled)
     }
     suspend fun setBackendUrl(url: String) {
         settingsRepository.setBackendUrl(url)
-    }
-    suspend fun setBackendFallbackThresholdMargin(margin: Float) {
-        settingsRepository.setBackendFallbackThresholdMargin(margin)
     }
     suspend fun setSaveDebugImages(enabled: Boolean) {
         settingsRepository.setSaveDebugImages(enabled)
@@ -168,11 +160,6 @@ fun SettingsScreen(
     val scrollState = rememberScrollState()
 
     // 状态变量
-    var timeWindowStartHour by remember { mutableStateOf(22) }
-    var timeWindowEndHour by remember { mutableStateOf(2) }
-    var timeWindowEnabled by remember { mutableStateOf(true) }
-
-    var detectionEnabled by remember { mutableStateOf(true) }
     var detectionInterval by remember { mutableStateOf(1) }
     var nsfwThreshold by remember { mutableStateOf(0.85f) }
 
@@ -180,25 +167,18 @@ fun SettingsScreen(
     var vibrationEnabled by remember { mutableStateOf(true) }
     var soundEnabled by remember { mutableStateOf(true) }
 
+    var bringToForeground by remember { mutableStateOf(false) }
+
     var floatingWindowEnabled by remember { mutableStateOf(false) }
     var floatingWindowShowWarning by remember { mutableStateOf(true) }
 
     var backendEnabled by remember { mutableStateOf(true) }
     var backendUrl by remember { mutableStateOf("") }
-    var backendThresholdMargin by remember { mutableStateOf(0.05f) }
     var saveDebugImages by remember { mutableStateOf(true) }
 
     // 从ViewModel加载设置
     LaunchedEffect(Unit) {
-        // 时间窗口
-        val timeWindowFlow = viewModel.timeWindow
-        val timeWindow = timeWindowFlow.first()
-        timeWindowStartHour = timeWindow.startHour
-        timeWindowEndHour = timeWindow.endHour
-        timeWindowEnabled = timeWindow.enabled
-
         // 检测设置
-        detectionEnabled = viewModel.isDetectionEnabled.first()
         detectionInterval = viewModel.detectionInterval.first()
         nsfwThreshold = viewModel.nsfwThreshold.first()
 
@@ -211,10 +191,12 @@ fun SettingsScreen(
         floatingWindowEnabled = viewModel.floatingWindowEnabled.first()
         floatingWindowShowWarning = viewModel.floatingWindowShowWarning.first()
 
+        // 回到主页设置
+        bringToForeground = viewModel.bringToForeground.first()
+
         // 后端设置
         backendEnabled = viewModel.backendEnabled.first()
         backendUrl = viewModel.backendUrl.first()
-        backendThresholdMargin = viewModel.backendFallbackThresholdMargin.first()
         saveDebugImages = viewModel.saveDebugImages.first()
     }
 
@@ -251,80 +233,29 @@ fun SettingsScreen(
 
         Spacer(modifier = Modifier.height(24.dp))
 
-        // 时间窗口设置
-        SettingsSection(title = "时间窗口设置") {
-            SettingsSwitch(
-                title = "启用时间窗口",
-                checked = timeWindowEnabled,
-                onCheckedChange = { checked ->
-                    timeWindowEnabled = checked
-                    scope.launch {
-                        viewModel.saveTimeWindow(timeWindowStartHour, timeWindowEndHour, checked)
-                    }
-                }
-            )
-
-            if (timeWindowEnabled) {
-                SettingsSlider(
-                    title = "开始时间（小时）",
-                    value = timeWindowStartHour.toFloat(),
-                    onValueChange = { value ->
-                        timeWindowStartHour = value.toInt()
-                        scope.launch {
-                            viewModel.saveTimeWindow(timeWindowStartHour, timeWindowEndHour, timeWindowEnabled)
-                        }
-                    },
-                    valueRange = 0f..23f,
-                    steps = 22
-                )
-
-                SettingsSlider(
-                    title = "结束时间（小时）",
-                    value = timeWindowEndHour.toFloat(),
-                    onValueChange = { value ->
-                        timeWindowEndHour = value.toInt()
-                        scope.launch {
-                            viewModel.saveTimeWindow(timeWindowStartHour, timeWindowEndHour, timeWindowEnabled)
-                        }
-                    },
-                    valueRange = 0f..23f,
-                    steps = 22
-                )
-
-            }
-        }
-
-        Spacer(modifier = Modifier.height(16.dp))
-
         // 检测设置
-        SettingsSection(title = "检测设置") {
-            SettingsSwitch(
-                title = "启用检测",
-                checked = detectionEnabled,
-                onCheckedChange = { checked ->
-                    detectionEnabled = checked
-                    scope.launch {
-                        viewModel.setDetectionEnabled(checked)
-                    }
-                }
+        SettingsSection(title = "本地检测设置") {
+            Text(
+                text = "以下设置控制本地TFLite模型的检测行为，区别于后端兜底检测。",
+                fontSize = 13.sp,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
             )
 
-            if (detectionEnabled) {
-                SettingsSlider(
-                    title = "检测间隔（分钟）",
-                    value = detectionInterval.toFloat(),
-                    onValueChange = { value ->
-                        detectionInterval = value.toInt()
-                        scope.launch {
-                            viewModel.setDetectionInterval(detectionInterval)
-                        }
-                    },
-                    valueRange = 1f..60f,
-                    steps = 58
-                )
+            SettingsSlider(
+                title = "检测间隔（分钟）",
+                value = detectionInterval.toFloat(),
+                onValueChange = { value ->
+                    detectionInterval = value.toInt()
+                    scope.launch {
+                        viewModel.setDetectionInterval(detectionInterval)
+                    }
+                },
+                valueRange = 1f..60f,
+                steps = 58
+            )
 
-                SettingsSlider(
-                    title = "NSFW阈值",
+            SettingsSlider(
+                title = "NSFW阈值",
                     value = nsfwThreshold,
                     onValueChange = { value ->
                         nsfwThreshold = value
@@ -336,7 +267,6 @@ fun SettingsScreen(
                     steps = 99,
                     valueDisplay = { "${(it * 100).toInt()}%" }
                 )
-            }
         }
 
         Spacer(modifier = Modifier.height(16.dp))
@@ -411,6 +341,17 @@ fun SettingsScreen(
                         }
                     }
                 )
+
+                SettingsSwitch(
+                    title = "NSFW检测时回到详情页",
+                    checked = bringToForeground,
+                    onCheckedChange = { checked ->
+                        bringToForeground = checked
+                        scope.launch {
+                            viewModel.setBringToForeground(checked)
+                        }
+                    }
+                )
             }
         }
 
@@ -446,7 +387,13 @@ fun SettingsScreen(
         Spacer(modifier = Modifier.height(16.dp))
 
         // 后端设置
-        SettingsSection(title = "后端兜底设置") {
+        SettingsSection(title = "后端服务兜底检测") {
+            Text(
+                text = "当本地TFLite模型判定为安全时，通过后端服务器进行二次验证以提高准确性。",
+                fontSize = 13.sp,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+
             SettingsSwitch(
                 title = "启用后端检测",
                 checked = backendEnabled,
@@ -485,20 +432,6 @@ fun SettingsScreen(
                         Text("保存URL")
                     }
                 }
-
-                SettingsSlider(
-                    title = "兜底阈值容差",
-                    value = backendThresholdMargin,
-                    onValueChange = { value ->
-                        backendThresholdMargin = value
-                        scope.launch {
-                            viewModel.setBackendFallbackThresholdMargin(value)
-                        }
-                    },
-                    valueRange = 0f..0.3f,
-                    steps = 29,
-                    valueDisplay = { "${(it * 100).toInt()}%" }
-                )
 
                 SettingsSwitch(
                     title = "保存调试图片",

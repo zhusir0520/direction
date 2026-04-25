@@ -307,6 +307,16 @@ class DetectionRepository(
 
             // 自动清理过期记录
             cleanupExpiredRecords()
+
+            // 更新检测统计
+            kotlinx.coroutines.CoroutineScope(Dispatchers.IO).launch {
+                try {
+                    val settingsRepo = SettingsRepository(context)
+                    settingsRepo.updateDetectionStats(cleanedResult.isNSFW)
+                } catch (e: Exception) {
+                    android.util.Log.e(TAG, "更新检测统计失败", e)
+                }
+            }
         } catch (e: Exception) {
             // 记录错误但不崩溃
             android.util.Log.e(TAG, "保存检测结果失败", e)

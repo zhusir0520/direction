@@ -28,9 +28,9 @@ cd android
 # 清理构建
 ./gradlew clean
 
-# ⭐ 一键构建+MD5命名+安装（推荐AI使用）
+# ⭐ 一键构建+短MD5命名+安装（推荐AI使用）
 ./build-and-name.sh --install --cleanup-old
-# 仅构建+MD5命名（不安装）
+# 仅构建+短MD5命名（不安装），如 direction-a1b2c3d.apk
 ./build-and-name.sh
 ```
 
@@ -163,7 +163,12 @@ UI层 (Compose) → 业务逻辑层 → 数据层
 - **`SettingsViewModel.kt`** 管理设置状态，与 `SettingsRepository` 交互
 
 #### 10. 历史记录和详情查看
-- **`HistoryActivity.kt`** 显示检测历史记录列表，支持下拉刷新、删除记录、查看详情
+- **`HistoryActivity.kt`** 显示检测历史记录列表，支持下拉刷新、查看详情、单条和批量删除
+  - **批量选择模式**: 点击顶部 `✓` 进入编辑模式，按日期显示三态复选框（全选/部分选/未选），选中后顶部出现删除按钮
+  - **日期折叠**: 每个日期组可点击展开/折叠；进入编辑模式时默认全部折叠，方便快速定位
+  - **乐观删除**: 删除时先立即从UI列表移除，IO操作在后台异步执行，体验流畅
+  - **缩略图修复**: LazyColumn 使用 `key = { it.timestamp }` 唯一标识，配合 `LaunchedEffect(result)` 重置 bitmap，避免列表复用导致缩略图错乱
+  - **状态栏适配**: 使用 `WindowInsets.statusBars` 确保布局不重叠状态栏
 - **`HistoryDetailActivity.kt`** 显示单个检测记录的详细信息，包括截图、分类分数、后端检测结果
 - **`DetectionResultActivity.kt`** 显示实时检测结果的专门页面，与历史详情界面一致但数据来自实时检测
 
@@ -252,7 +257,6 @@ app/src/main/java/com/example/direction/
 ├── HistoryActivity.kt               # 检测历史记录列表
 ├── HistoryDetailActivity.kt         # 单个检测记录详情页面
 ├── DetectionResultActivity.kt       # 实时检测结果页面（与历史详情界面一致）
-├── DetectionActivity.kt             # 遗留文件（可能未使用）
 ├── manager/                         # 业务逻辑管理器
 │   ├── TimeWindowManager.kt        # 时间窗口逻辑
 │   ├── PermissionManager.kt        # 权限管理（当前未使用）

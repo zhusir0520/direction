@@ -183,59 +183,6 @@ private fun FullScreenImageContent(
             }
         }
 
-        // 手势提示（仅在首次显示时）
-        var showGestureHint by remember { mutableStateOf(true) }
-        if (showGestureHint) {
-            LaunchedEffect(Unit) {
-                kotlinx.coroutines.delay(3000)
-                showGestureHint = false
-            }
-
-            Box(
-                modifier = Modifier
-                    .fillMaxSize()
-                    .padding(bottom = 80.dp),
-                contentAlignment = Alignment.BottomCenter
-            ) {
-                Surface(
-                    shape = MaterialTheme.shapes.medium,
-                    color = Color.Black.copy(alpha = 0.7f)
-                ) {
-                    Column(
-                        modifier = Modifier.padding(16.dp),
-                        horizontalAlignment = Alignment.CenterHorizontally
-                    ) {
-                        Text(
-                            text = "手势操作提示",
-                            color = Color.White,
-                            fontWeight = FontWeight.Bold,
-                            fontSize = 16.sp
-                        )
-                        Spacer(modifier = Modifier.height(8.dp))
-                        Text(
-                            text = "• 双指捏合：缩放图片",
-                            color = Color.White,
-                            fontSize = 14.sp
-                        )
-                        Text(
-                            text = "• 双指拖动：平移图片",
-                            color = Color.White,
-                            fontSize = 14.sp
-                        )
-                        Text(
-                            text = "• 双击：放大/恢复",
-                            color = Color.White,
-                            fontSize = 14.sp
-                        )
-                        Text(
-                            text = "• 单击：退出全屏",
-                            color = Color.White,
-                            fontSize = 14.sp
-                        )
-                    }
-                }
-            }
-        }
     }
 }
 
