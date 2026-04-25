@@ -417,6 +417,9 @@ class MainActivity : ComponentActivity() {
                             LogUtils.i("MainActivity", "onResume: 悬浮窗已启用且有权限，恢复显示")
                             val (savedX, savedY) = settingsRepository.floatingWindowPosition.first()
                             floatingWindowManager.showFloatingWindow(savedX, savedY)
+
+                            // 检查最近是否有NSFW检测结果，有则显示悬浮窗警告
+                            checkRecentNsfwForFloatingWarning()
                         } else {
                             LogUtils.w("MainActivity", "onResume: 悬浮窗已启用但无权限")
                         }
@@ -425,10 +428,42 @@ class MainActivity : ComponentActivity() {
                         LogUtils.i("MainActivity", "onResume: Android M以下，悬浮窗权限可能默认授予，尝试显示")
                         val (savedX, savedY) = settingsRepository.floatingWindowPosition.first()
                         floatingWindowManager.showFloatingWindow(savedX, savedY)
+                        checkRecentNsfwForFloatingWarning()
                     }
                 }
             } catch (e: Exception) {
                 LogUtils.e("MainActivity", "onResume: 恢复悬浮窗失败", e)
+            }
+        }
+    }
+
+    /**
+     * 检查最近是否有NSFW检测结果，有则显示悬浮窗警告
+     * 解决广播在Activity后台时无法送达的问题
+     */
+    private fun checkRecentNsfwForFloatingWarning() {
+        scope.launch {
+            try {
+                val showWarning = settingsRepository.floatingWindowShowWarning.first()
+                if (!showWarning) {
+                    LogUtils.d("MainActivity", "checkRecentNsfw: 悬浮窗警告功能已禁用，跳过")
+                    return@launch
+                }
+
+                val recentResults = detectionRepository.getRecentResults(limit = 1)
+                if (recentResults.isNotEmpty()) {
+                    val latest = recentResults.first()
+                    val now = System.currentTimeMillis()
+                    // 30秒内的NSFW结果才显示警告
+                    if (latest.isNSFW && (now - latest.timestamp) < 30_000) {
+                        LogUtils.i("MainActivity", "checkRecentNsfw: 检测到最近NSFW结果，显示悬浮窗警告")
+                        floatingWindowManager.showCenteredNotification("想想你该干什么！")
+                    } else {
+                        LogUtils.d("MainActivity", "checkRecentNsfw: 无最新NSFW结果或已过期")
+                    }
+                }
+            } catch (e: Exception) {
+                LogUtils.e("MainActivity", "checkRecentNsfw: 检查失败", e)
             }
         }
     }

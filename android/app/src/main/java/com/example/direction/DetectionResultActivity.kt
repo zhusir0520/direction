@@ -1,5 +1,6 @@
 package com.example.direction
 
+import android.content.Intent
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
 import android.os.Bundle
@@ -145,7 +146,17 @@ class DetectionResultActivity : ComponentActivity() {
                         detectionResult = detectionResult!!,
                         screenshotBitmap = screenshotBitmap,
                         detectionRepository = detectionRepository,
-                        onBack = { finish() }
+                        onBack = {
+                            // 先打开主页，再打开历史记录列表页
+                            // 这样返回时：历史列表 → 主页 → 回到桌面，而不是跳到其他应用
+                            val mainIntent = Intent(this, MainActivity::class.java).apply {
+                                flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP
+                            }
+                            startActivity(mainIntent)
+                            val historyIntent = Intent(this, HistoryActivity::class.java)
+                            startActivity(historyIntent)
+                            finish()
+                        }
                     )
                 }
             }

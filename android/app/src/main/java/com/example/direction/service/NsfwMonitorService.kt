@@ -30,12 +30,14 @@ import com.example.direction.detector.classifier.NSFWClassifier
 import com.example.direction.detector.classifier.BackendNsfwDetector
 import com.example.direction.model.DetectionResult
 import com.example.direction.model.DebugImageData
+import com.example.direction.manager.FloatingWindowManager
 import com.example.direction.repository.DetectionRepository
 import com.example.direction.utils.NotificationUtils
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.async
+import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeout
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
@@ -684,8 +686,8 @@ class NsfwMonitorService : Service() {
     }
 
     /**
-     * 发送NSFW检测广播
-     * 用于触发悬浮窗警告
+     * 发送NSFW检测广播并直接显示悬浮窗警告
+     * 用于触发悬浮窗警告（双保险：即时显示 + 广播通知Activity）
      */
     private fun sendNsfwDetectedBroadcast() {
         try {
@@ -698,6 +700,32 @@ class NsfwMonitorService : Service() {
             LogUtils.d(TAG, "广播发送完成")
         } catch (e: Exception) {
             LogUtils.e(TAG, "发送NSFW检测广播失败", e)
+        }
+
+        // 直接显示悬浮窗警告（不依赖Activity接收广播）
+        CoroutineScope(Dispatchers.Main).launch {
+            try {
+                val floatingEnabled = withContext(Dispatchers.IO) {
+                    settingsRepository.floatingWindowEnabled.first()
+                }
+                val showWarning = withContext(Dispatchers.IO) {
+                    settingsRepository.floatingWindowShowWarning.first()
+                }
+                LogUtils.d(TAG, "悬浮窗设置: enabled=$floatingEnabled, showWarning=$showWarning")
+
+                if (floatingEnabled && showWarning) {
+                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M &&
+                        !android.provider.Settings.canDrawOverlays(this@NsfwMonitorService)) {
+                        LogUtils.w(TAG, "没有悬浮窗权限，无法直接显示警告")
+                        return@launch
+                    }
+                    val fwm = FloatingWindowManager(this@NsfwMonitorService)
+                    fwm.showCenteredNotification("想想你该干什么！")
+                    LogUtils.i(TAG, "已直接从服务显示悬浮窗警告")
+                }
+            } catch (e: Exception) {
+                LogUtils.e(TAG, "直接显示悬浮窗警告失败", e)
+            }
         }
     }
 

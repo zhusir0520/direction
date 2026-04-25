@@ -150,7 +150,9 @@ fun HistoryScreen(
             isRefreshing = true
             isLoading = true
             try {
-                val newHistory = detectionRepository.getRecentResults(limit = 0)
+                val newHistory = withContext(Dispatchers.IO) {
+                    detectionRepository.getRecentResults(limit = 0)
+                }
                 history.clear()
                 history.addAll(newHistory)
             } finally {
@@ -248,10 +250,19 @@ fun HistoryScreen(
                     modifier = Modifier.fillMaxSize(),
                     contentAlignment = Alignment.Center
                 ) {
-                    CircularProgressIndicator()
+                    Column(
+                        horizontalAlignment = Alignment.CenterHorizontally
+                    ) {
+                        CircularProgressIndicator()
+                        Spacer(modifier = Modifier.height(16.dp))
+                        Text(
+                            text = "正在加载历史记录...",
+                            fontSize = 14.sp,
+                            color = Color.Gray
+                        )
+                    }
                 }
             } else if (history.isEmpty()) {
-                // 空状态
                 Column(
                     modifier = Modifier.fillMaxSize(),
                     horizontalAlignment = Alignment.CenterHorizontally,
@@ -431,8 +442,9 @@ fun HistoryScreen(
                         showBatchDeleteConfirm = false
                         // 后台执行实际删除
                         scope.launch(Dispatchers.IO) {
-                            for (result in toDelete) {
-                                detectionRepository.deleteResult(result)
+                            val deleted = detectionRepository.deleteResults(toDelete)
+                            if (deleted != toDelete.size) {
+                                loadHistory()
                             }
                         }
                     },

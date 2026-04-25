@@ -800,7 +800,7 @@ class DetectionRepository(
                 val json = gson.toJson(history)
                 preferences.edit()
                     .putString(PREF_DETECTION_HISTORY, json)
-                    .apply()
+                    .commit() // 同步写入，与saveResultInternal保持一致
 
                 true
             } else {
@@ -809,6 +809,47 @@ class DetectionRepository(
         } catch (e: Exception) {
             android.util.Log.e(TAG, "删除检测记录失败", e)
             false
+        }
+    }
+
+    /**
+     * 批量删除检测记录（一次读写，避免循环 apply 导致数据不一致）
+     * @param results 要删除的检测结果列表
+     * @return 实际删除的数量
+     */
+    suspend fun deleteResults(results: List<DetectionResult>): Int {
+        return try {
+            val history = getHistory()
+            var deletedCount = 0
+            val timestampsToDelete = results.map { it.timestamp }.toSet()
+
+            val iterator = history.iterator()
+            while (iterator.hasNext()) {
+                val item = iterator.next()
+                if (item.timestamp in timestampsToDelete) {
+                    // 删除对应的截图文件
+                    item.screenshotPath?.let { path ->
+                        screenshotManager.deleteScreenshot(path)
+                    }
+                    item.originalScreenshotPath?.let { path ->
+                        screenshotManager.deleteScreenshot(path)
+                    }
+                    iterator.remove()
+                    deletedCount++
+                }
+            }
+
+            if (deletedCount > 0) {
+                val json = gson.toJson(history)
+                preferences.edit()
+                    .putString(PREF_DETECTION_HISTORY, json)
+                    .commit()
+            }
+
+            deletedCount
+        } catch (e: Exception) {
+            android.util.Log.e(TAG, "批量删除检测记录失败", e)
+            0
         }
     }
 
