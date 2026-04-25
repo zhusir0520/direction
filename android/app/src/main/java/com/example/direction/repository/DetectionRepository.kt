@@ -73,17 +73,27 @@ class DetectionRepository(
 
         // 保存调试图片（如果启用且存在）
         if (result.debugImages != null && result.debugImages.isNotEmpty()) {
-            // 在协程中保存调试图片
-            usedScope.launch {
-                try {
-                    val savedDebugImages = saveDebugImagesToFile(result.debugImages!!, result.timestamp)
-                    val updatedResult = result.copy(debugImages = savedDebugImages)
-                    // 调用内部保存逻辑（带更新后的debugImages）
-                    saveResultWithScreenshot(updatedResult, screenshot, usedScope)
-                } catch (e: Exception) {
-                    android.util.Log.e(TAG, "保存调试图片失败，继续保存结果", e)
-                    // 失败时使用原始结果（但保留debugImages字段，因为保存失败）
-                    saveResultWithScreenshot(result, screenshot, usedScope)
+            // 检查是否已处理过（base64已清空且有本地路径），避免重复保存
+            val alreadyProcessed = result.debugImages!!.all { (_, img) ->
+                img.base64.isEmpty() && img.localPath != null
+            }
+
+            if (alreadyProcessed) {
+                // 已处理过，直接保存结果
+                saveResultWithScreenshot(result, screenshot, usedScope)
+            } else {
+                // 在协程中保存调试图片
+                usedScope.launch {
+                    try {
+                        val savedDebugImages = saveDebugImagesToFile(result.debugImages!!, result.timestamp)
+                        val updatedResult = result.copy(debugImages = savedDebugImages)
+                        // 调用内部保存逻辑（带更新后的debugImages）
+                        saveResultWithScreenshot(updatedResult, screenshot, usedScope)
+                    } catch (e: Exception) {
+                        android.util.Log.e(TAG, "保存调试图片失败，继续保存结果", e)
+                        // 失败时使用原始结果（但保留debugImages字段，因为保存失败）
+                        saveResultWithScreenshot(result, screenshot, usedScope)
+                    }
                 }
             }
         } else {
@@ -289,17 +299,41 @@ class DetectionRepository(
                 }
             }
 
-            // 保存到SharedPreferences
+            // 保存到SharedPreferences（使用commit同步写入，防止进程被杀导致数据丢失）
             val json = gson.toJson(cleanedHistory)
             preferences.edit()
                 .putString(PREF_DETECTION_HISTORY, json)
-                .apply()
+                .commit()
 
             // 自动清理过期记录
             cleanupExpiredRecords()
         } catch (e: Exception) {
             // 记录错误但不崩溃
             android.util.Log.e(TAG, "保存检测结果失败", e)
+        }
+    }
+
+    /**
+     * 立即保存调试图片并清理base64（在传递给saveResult之前调用）
+     * 用于减少内存中base64数据的驻留时间，防止OOM
+     * @param result 包含debugImages的检测结果
+     * @return 更新了localPath且清空了base64的检测结果
+     */
+    suspend fun saveDebugImagesImmediately(result: DetectionResult): DetectionResult {
+        if (result.debugImages == null || result.debugImages.isEmpty()) return result
+
+        return withContext(Dispatchers.IO) {
+            try {
+                val savedDebugImages = saveDebugImagesToFile(result.debugImages!!, result.timestamp)
+                result.copy(debugImages = savedDebugImages)
+            } catch (e: Exception) {
+                android.util.Log.e(TAG, "立即保存调试图片失败，清理base64", e)
+                // 失败时清理base64以免OOM
+                val cleaned = result.debugImages!!.mapValues { (_, img) ->
+                    img.copy(base64 = "")
+                }
+                result.copy(debugImages = cleaned)
+            }
         }
     }
 
@@ -348,6 +382,10 @@ class DetectionRepository(
                     savedImages[key] = updatedImageData
 
                     android.util.Log.d(TAG, "调试图片保存成功: $key -> ${imageFile.absolutePath}")
+                } else if (imageData.localPath != null) {
+                    // base64已清空且已有localPath，说明已经处理过，直接保留
+                    savedImages[key] = imageData
+                    android.util.Log.d(TAG, "调试图片已存在: $key -> ${imageData.localPath}")
                 }
             } catch (e: Exception) {
                 android.util.Log.e(TAG, "保存调试图片失败: $key", e)

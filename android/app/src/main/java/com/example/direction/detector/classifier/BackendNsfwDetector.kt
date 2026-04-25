@@ -30,8 +30,8 @@ class BackendNsfwDetector(
 ) {
     companion object {
         private const val TAG = "BackendNsfwDetector"
-        private const val CONNECT_TIMEOUT_MS = 0 // 无连接超时限制
-        private const val READ_TIMEOUT_MS = 0 // 无读取超时限制
+        private const val CONNECT_TIMEOUT_MS = 3000 // 连接超时3秒
+        private const val READ_TIMEOUT_MS = 5000 // 读取超时5秒
         private const val BOUNDARY = "----WebKitFormBoundary7MA4YWxkTrZu0gW"
     }
 
@@ -291,8 +291,8 @@ class BackendNsfwDetector(
         try {
             val url = URL(backendUrl.replace("/detect", "/health"))
             val connection = url.openConnection() as HttpURLConnection
-            connection.connectTimeout = 0 // 无连接超时限制
-            connection.readTimeout = 0 // 无读取超时限制
+            connection.connectTimeout = 3000 // 连接超时3秒
+            connection.readTimeout = 5000 // 读取超时5秒
             connection.requestMethod = "GET"
             val responseCode = connection.responseCode
             connection.disconnect()

@@ -407,9 +407,8 @@ class MainActivity : ComponentActivity() {
                                 floatingWindowManager.showCenteredNotification("想想你该干什么！")
                                 LogUtils.d("MainActivity", "中央通知显示方法已调用")
 
-                                // 立即回到应用首页
-                                LogUtils.i("MainActivity", "显示警告后，立即回到应用首页")
-                                bringAppToForeground()
+                                // 回到应用首页由NsfwMonitorService在释放录屏资源后处理
+                                // 此处不再调用bringAppToForeground()，避免与服务的调用冲突
                             } else {
                                 LogUtils.w("MainActivity", "悬浮窗警告功能已禁用")
                             }
@@ -1177,7 +1176,7 @@ fun ClashStyleAppContent(
                 fontSize = 32.sp,
                 fontWeight = FontWeight.Bold,
                 color = MaterialTheme.colorScheme.primary,
-                modifier = Modifier.padding(start = 16.dp, bottom = 16.dp)
+                modifier = Modifier.padding(start = 16.dp,top = 70.dp, bottom = 8.dp)
             )
         }
 

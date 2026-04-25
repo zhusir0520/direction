@@ -25,6 +25,7 @@ import android.util.Log
 import com.example.direction.utils.LogUtils
 import androidx.core.app.NotificationCompat
 import com.example.direction.R
+import com.example.direction.DetectionResultActivity
 import com.example.direction.detector.classifier.NSFWClassifier
 import com.example.direction.detector.classifier.BackendNsfwDetector
 import com.example.direction.model.DetectionResult
@@ -33,11 +34,15 @@ import com.example.direction.repository.DetectionRepository
 import com.example.direction.utils.NotificationUtils
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.async
 import kotlinx.coroutines.withTimeout
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import java.nio.ByteBuffer
+import java.io.File
+import java.io.FileOutputStream
+import com.google.gson.Gson
 
 /**
  * NSFW监控前台服务
@@ -122,6 +127,12 @@ class NsfwMonitorService : Service() {
     // 当前检测间隔（毫秒）
     private var currentDetectionInterval = 1 * 60 * 1000L // 默认1分钟
 
+    // 当前检测协程Job，用于取消上一次检测的延迟回调
+    private var detectionJob: Job? = null
+
+    // 标记是否为NSFW检测触发的主动关闭
+    private var isNsfwShutdown = false
+
     override fun onCreate() {
         super.onCreate()
         LogUtils.i(TAG, "NsfwMonitorService创建")
@@ -172,11 +183,17 @@ class NsfwMonitorService : Service() {
             stopSelf()
         }
 
-        return START_NOT_STICKY
+        // 使用START_STICKY：如果进程被系统杀死，系统会尝试重启服务
+        // 注意：MediaProjection权限无法跨进程存活，重启后需要用户重新授权
+        return START_STICKY
     }
 
     override fun onDestroy() {
-        LogUtils.i(TAG, "NsfwMonitorService销毁")
+        LogUtils.i(TAG, "NsfwMonitorService销毁, isNsfwShutdown=$isNsfwShutdown")
+        if (!isNsfwShutdown) {
+            // 非NSFW主动关闭，记录调用栈排查异常关闭原因
+            LogUtils.w(TAG, "服务非预期关闭!", Exception("服务非预期关闭调用栈"))
+        }
         cleanupResources()
         super.onDestroy()
     }
@@ -304,15 +321,28 @@ class NsfwMonitorService : Service() {
             val pixelStride = planes[0].pixelStride
             val rowStride = planes[0].rowStride
             val rowPadding = rowStride - pixelStride * image.width
+            val bitmapWidth = image.width + rowPadding / pixelStride
+            val bitmapHeight = image.height
+
+            // 记录图像属性，便于排查视频截图问题
+            LogUtils.d(TAG, "图像属性: format=${image.format}, width=${image.width}, height=${image.height}, " +
+                    "pixelStride=$pixelStride, rowStride=$rowStride, rowPadding=$rowPadding, " +
+                    "计算宽=$bitmapWidth, buffer大小=${buffer.remaining()}")
+
+            // 检查Bitmap尺寸是否异常（超过屏幕尺寸太多可能导致OOM）
+            if (bitmapWidth > displayWidth * 2 || bitmapHeight > displayHeight * 2) {
+                LogUtils.w(TAG, "图像尺寸异常: ${bitmapWidth}x${bitmapHeight}, 屏幕: ${displayWidth}x${displayHeight}")
+            }
 
             // 创建Bitmap
             val bitmap = Bitmap.createBitmap(
-                image.width + rowPadding / pixelStride,
-                image.height,
+                bitmapWidth,
+                bitmapHeight,
                 Bitmap.Config.ARGB_8888
             )
 
             bitmap.copyPixelsFromBuffer(buffer)
+            LogUtils.d(TAG, "Bitmap创建成功: ${bitmap.width}x${bitmap.height}, 内存≈${bitmap.allocationByteCount / 1024}KB")
             bitmap
         } catch (e: Exception) {
             LogUtils.e(TAG, "转换图像为Bitmap失败", e)
@@ -395,8 +425,9 @@ class NsfwMonitorService : Service() {
         LogUtils.i(TAG, "开始检测屏幕内容")
         val startTime = System.currentTimeMillis()
 
-        // 在后台线程执行检测以避免阻塞主线程
-        CoroutineScope(Dispatchers.IO).launch {
+        // 取消上一次检测协程（防止旧NSFW检测的delay(5000)在新检测完成后意外触发stopSelf）
+        detectionJob?.cancel()
+        detectionJob = CoroutineScope(Dispatchers.IO).launch {
             try {
 
                 // 1. 截图
@@ -462,6 +493,14 @@ class NsfwMonitorService : Service() {
                                     // 合并结果
                                     finalResult = mergeDetectionResults(androidResult, backendResult)
                                     LogUtils.i(TAG, "合并后最终结果: isNSFW=${finalResult.isNSFW}, 后端结果: ${backendResult.backendIsNsfw}")
+
+                                    // 立即保存debugImages到文件并清理base64，减少内存峰值
+                                    // 后端返回的debug图片base64可能非常大（每个数MB），
+                                    // 先保存到文件再清理内存，既保留图片又释放内存
+                                    if (finalResult.debugImages != null && finalResult.debugImages!!.isNotEmpty()) {
+                                        finalResult = detectionRepository.saveDebugImagesImmediately(finalResult)
+                                        LogUtils.d(TAG, "已保存debugImages到文件并清理base64")
+                                    }
                                 } else {
                                     LogUtils.w(TAG, "后端检测返回null，使用Android结果")
                                     finalResult = androidResult
@@ -485,9 +524,9 @@ class NsfwMonitorService : Service() {
                 }
 
                 // 3. 保存结果（NSFW和SFW内容都保存截图）
-                // 为保存创建副本，立即回收原始Bitmap以释放内存
+                // 创建Bitmap副本用于保存，然后立即回收原始Bitmap释放内存
                 val screenshotCopy = createBitmapCopy(screenshot)
-                screenshot.recycle() // 立即回收原始Bitmap
+                screenshot.recycle()
 
                 // 读取调试图片保存设置
                 val saveDebugImages = try {
@@ -497,6 +536,17 @@ class NsfwMonitorService : Service() {
                     false // 默认不保存调试图片
                 }
                 LogUtils.d(TAG, "调试图片保存设置: $saveDebugImages")
+
+                // 在saveResult之前保存临时截图文件（saveResult会回收Bitmap）
+                val tempScreenshotFile = File(cacheDir, "temp_screenshot_${System.currentTimeMillis()}.jpg")
+                try {
+                    FileOutputStream(tempScreenshotFile).use { out ->
+                        screenshotCopy.compress(Bitmap.CompressFormat.JPEG, 80, out)
+                    }
+                    LogUtils.d(TAG, "临时截图已保存: ${tempScreenshotFile.absolutePath}")
+                } catch (e: Exception) {
+                    LogUtils.e(TAG, "保存临时截图失败", e)
+                }
 
                 detectionRepository.saveResult(finalResult, screenshotCopy, null, saveDebugImages)
                 LogUtils.d(TAG, "结果已保存（包含截图）")
@@ -557,6 +607,11 @@ class NsfwMonitorService : Service() {
                     // 如果两者都禁用，至少记录日志
                     if (!notificationEnabled && !vibrationEnabled) {
                         LogUtils.i(TAG, "通知和震动均被禁用，仅记录检测结果")
+                    }
+
+                    // 展示检测结果详情页（不释放录屏，服务继续运行）
+                    if (tempScreenshotFile.exists()) {
+                        showDetectionResult(finalResult, tempScreenshotFile.absolutePath)
                     }
                 } else {
                     LogUtils.i(TAG, "SFW内容，不发送通知")
@@ -683,6 +738,72 @@ class NsfwMonitorService : Service() {
     }
 
     /**
+     * 释放MediaProjection录屏资源（NSFW检测到后主动调用）
+     * 先停止录屏再回到前台，避免vivo OriginOS强制停止MediaProjection
+     */
+    private fun releaseMediaProjectionForNsfw() {
+        LogUtils.i(TAG, "NSFW检测到，主动释放录屏资源")
+        try {
+            stopPeriodicDetection()
+            virtualDisplay?.release()
+            virtualDisplay = null
+            imageReader?.close()
+            imageReader = null
+            mediaProjection?.unregisterCallback(mediaProjectionCallback)
+            mediaProjection?.stop()
+            mediaProjection = null
+            notifyMediaProjectionStopped()
+            LogUtils.i(TAG, "录屏资源已主动释放")
+        } catch (e: Exception) {
+            LogUtils.e(TAG, "释放录屏资源失败", e)
+        }
+    }
+
+    /**
+     * 展示检测结果详情页
+     * 不释放录屏，服务继续运行
+     */
+    private fun showDetectionResult(result: DetectionResult, screenshotPath: String) {
+        try {
+            LogUtils.i(TAG, "展示检测结果详情页")
+
+            // 使用清理过的result（移大幅字段，避免Intent过大）
+            val cleanedResult = result.createCleanedCopy()
+            val gson = Gson()
+
+            val intent = Intent(this, DetectionResultActivity::class.java).apply {
+                putExtra(DetectionResultActivity.EXTRA_DETECTION_RESULT_JSON, gson.toJson(cleanedResult))
+                putExtra(DetectionResultActivity.EXTRA_SCREENSHOT_PATH, screenshotPath)
+                flags = Intent.FLAG_ACTIVITY_NEW_TASK or
+                        Intent.FLAG_ACTIVITY_CLEAR_TASK or
+                        Intent.FLAG_ACTIVITY_SINGLE_TOP
+            }
+            startActivity(intent)
+            LogUtils.i(TAG, "检测结果详情页已启动")
+        } catch (e: Exception) {
+            LogUtils.e(TAG, "展示检测结果详情页失败", e)
+        }
+    }
+
+    /**
+     * 将应用带到前台
+     */
+    private fun bringAppToForeground() {
+        try {
+            LogUtils.i(TAG, "尝试将应用带到前台")
+            val intent = Intent(this, com.example.direction.MainActivity::class.java).apply {
+                flags = Intent.FLAG_ACTIVITY_NEW_TASK or
+                        Intent.FLAG_ACTIVITY_CLEAR_TASK or
+                        Intent.FLAG_ACTIVITY_SINGLE_TOP
+            }
+            startActivity(intent)
+            LogUtils.i(TAG, "MainActivity已启动")
+        } catch (e: Exception) {
+            LogUtils.e(TAG, "将应用带到前台失败", e)
+        }
+    }
+
+    /**
      * 执行后端兜底检测
      * @param screenshot 截图
      * @param backendUrl 后端服务URL
@@ -697,7 +818,9 @@ class NsfwMonitorService : Service() {
         return try {
             LogUtils.i(TAG, "开始后端兜底检测，URL: $backendUrl")
             val backendDetector = BackendNsfwDetector(backendUrl, backendThreshold)
-            backendDetector.detect(screenshot)
+            withTimeout(8000) {
+                backendDetector.detect(screenshot)
+            }
         } catch (e: Exception) {
             LogUtils.e(TAG, "后端兜底检测失败", e)
             null

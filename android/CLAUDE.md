@@ -27,6 +27,11 @@ cd android
 
 # 清理构建
 ./gradlew clean
+
+# ⭐ 一键构建+MD5命名+安装（推荐AI使用）
+./build-and-name.sh --install --cleanup-old
+# 仅构建+MD5命名（不安装）
+./build-and-name.sh
 ```
 
 ### 测试
@@ -105,6 +110,8 @@ UI层 (Compose) → 业务逻辑层 → 数据层
 - 关键功能：周期性屏幕截图、NSFW 内容检测、结果存储和通知发送
 - 服务使用 `Handler` 和 `Runnable` 进行周期性检测；检测间隔可以从设置动态调整
 - 使用 `MediaProjection` API 捕获屏幕，`ImageReader` 获取图像数据
+- **进程恢复**: 使用 `START_STICKY`，进程被系统杀死后会自动重启服务（但 MediaProjection 需要重新授权）
+- **NSFW 处理**: 检测到 NSFW 时不释放录屏也不停止服务，而是直接打开 `DetectionResultActivity` 详情页显示结果，服务继续运行
 
 #### 4. 内容分类流水线
 - **`NSFWClassifier.kt`** 基于 TensorFlow Lite 的 NSFW 内容分类器（使用 GantMan 的 saved_model.tflite）
@@ -173,7 +180,7 @@ UI层 (Compose) → 业务逻辑层 → 数据层
 5. **内容分类** – `NSFWClassifier` 使用 TensorFlow Lite 处理截图，计算 NSFW/SFW 概率
 6. **后端兜底检测（可选）** – 当 Android 检测结果为 SFW 时触发后端检测，使用双模型架构和 YOLOv8s 物体检测进行二次验证
 7. **截图保存** – 截图通过 `ScreenshotManager` 保存到应用私有目录；路径记录在检测结果中
-8. **结果处理** – 通过 `NotificationUtils` 发送通知（仅针对 NSFW）；结果由 `DetectionRepository` 存储（包括截图路径和后端检测数据）
+8. **结果处理** – 通过 `NotificationUtils` 发送通知（仅针对 NSFW）；结果由 `DetectionRepository` 存储（包括截图路径和后端检测数据）；NSFW 时打开 `DetectionResultActivity` 详情页，服务继续运行不释放录屏
 9. **悬浮窗警告** – 如果悬浮窗启用，`FloatingWindowManager` 显示警告文本 5 秒（从 `NsfwMonitorService` 发送广播）
 10. **实时检测流程** – 用户通过主界面检测卡片选择图片，触发实时检测流程，结果在 `DetectionResultActivity` 中显示
 11. **历史记录查看** – 用户通过记录卡片进入 `HistoryActivity`，可选择记录查看详细结果（`HistoryDetailActivity`）
@@ -195,6 +202,13 @@ UI层 (Compose) → 业务逻辑层 → 数据层
 7. **震动模式**: 使用 3 次震动模式（每次 1000ms，间隔 250ms），当设置中启用震动时直接由 `Vibrator` API 触发
 8. **后端兜底检测**: 当 Android 检测结果为 SFW 时触发后端检测；使用双模型架构和 YOLOv8s 物体检测进行兜底验证；YOLOv8s 检测不到物体的问题已修复，精确度符合预期；结果合并采用逻辑或（Android 或后端任一检测为 NSFW 即判定为 NSFW）；后端设置（启用状态、URL、阈值容差）通过 `SettingsRepository` 管理
 9. **UI 架构**: 采用 Clash for Android 卡片式设计，主界面简洁明了，功能分离清晰；设置页面独立，提供完整的配置选项；历史记录和详情页面专门化，提供良好的用户体验
+10. **进程稳定性**:
+    - `AndroidManifest.xml` 设置 `android:largeHeap="true"` 请求更大堆内存
+    - `NsfwMonitorService` 使用 `START_STICKY`，进程被杀后系统自动重启
+    - 截图保持原始分辨率（不缩放），不影响 TFLite 分类准确度
+    - 后端 debug 图片的 base64 数据在收到响应后立即保存到文件并清理内存，防止 OOM
+    - `DetectionRepository.saveResultInternal` 使用 `commit()` 而非 `apply()` 同步写入 SharedPreferences，防止进程被杀导致数据丢失
+    - `BackendNsfwDetector` 设置连接超时 3s、读取超时 5s，防止网络请求挂起
 
 ## 后端服务器概述
 

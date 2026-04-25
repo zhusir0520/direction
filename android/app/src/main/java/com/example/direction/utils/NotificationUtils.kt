@@ -140,7 +140,6 @@ class NotificationUtils(private val context: Context) {
             .setContentIntent(pendingIntent)
             .setPriority(NotificationCompat.PRIORITY_HIGH)
             .setAutoCancel(true)
-            .setOnlyAlertOnce(true)
             .apply {
                 if (result.isNSFW) {
                     // 对于NSFW内容，添加更多警报特征
@@ -150,7 +149,6 @@ class NotificationUtils(private val context: Context) {
                     setLights(android.graphics.Color.RED, 1000, 1000)
                     setSound(android.provider.Settings.System.DEFAULT_NOTIFICATION_URI)
                     setCategory(NotificationCompat.CATEGORY_ALARM)
-                    setFullScreenIntent(pendingIntent, true)
                 }
             }
             .build()
