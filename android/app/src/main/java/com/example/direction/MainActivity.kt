@@ -33,7 +33,9 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.font.FontStyle
 import androidx.compose.ui.text.font.FontFamily
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Dialog
@@ -58,6 +60,10 @@ import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.async
+import rikka.shizuku.Shizuku
+import com.example.direction.manager.ShizukuManager
+import com.example.direction.manager.ShizukuState
+import androidx.compose.foundation.Canvas
 import java.io.InputStream
 
 class MainActivity : ComponentActivity() {
@@ -79,6 +85,9 @@ class MainActivity : ComponentActivity() {
         )
     }
     private val scope = CoroutineScope(Dispatchers.Main)
+
+    val shizukuManager = ShizukuManager()
+    private var shizukuState by mutableStateOf(ShizukuState.NOT_RUNNING)
 
     /**
      * 检查NsfwMonitorService是否正在运行
@@ -107,6 +116,31 @@ class MainActivity : ComponentActivity() {
 
     // NSFW检测广播接收器（用于悬浮窗警告）
     private lateinit var nsfwDetectedReceiver: BroadcastReceiver
+
+    // Shizuku 监听器
+    private val shizukuBinderReceivedListener = Shizuku.OnBinderReceivedListener {
+        scope.launch {
+            shizukuManager.resetCommandCache()
+            shizukuState = shizukuManager.getCurrentState()
+            LogUtils.i("MainActivity", "Shizuku binder received, state=$shizukuState")
+        }
+    }
+
+    private val shizukuBinderDeadListener = Shizuku.OnBinderDeadListener {
+        scope.launch {
+            shizukuManager.resetCommandCache()
+            shizukuState = ShizukuState.NOT_RUNNING
+            LogUtils.i("MainActivity", "Shizuku binder dead, state=NOT_RUNNING")
+        }
+    }
+
+    private val shizukuPermissionResultListener = Shizuku.OnRequestPermissionResultListener { requestCode, grantResult ->
+        scope.launch {
+            shizukuManager.resetCommandCache()
+            shizukuState = shizukuManager.getCurrentState()
+            LogUtils.i("MainActivity", "Shizuku permission result: requestCode=$requestCode, grantResult=$grantResult, state=$shizukuState")
+        }
+    }
 
     // Compose状态（在Activity中管理以便从回调访问）
     private var _detectionResult by mutableStateOf<DetectionResult?>(null)
@@ -300,6 +334,11 @@ class MainActivity : ComponentActivity() {
                     modifier = Modifier.fillMaxSize(),
                     color = MaterialTheme.colorScheme.background
                 ) {
+                    val scope = rememberCoroutineScope()
+                    var shizukuKillEnabled by remember { mutableStateOf(true) }
+                    LaunchedEffect(Unit) {
+                        settingsRepository.shizukuKillEnabled.collect { shizukuKillEnabled = it }
+                    }
                     ClashStyleAppContent(
                         timeWindowManager = timeWindowManager,
                         onRequestPermission = { toggleScreenCapturePermission() },
@@ -312,7 +351,15 @@ class MainActivity : ComponentActivity() {
                         isLoading = _isLoading,
                         uiPermissionState = uiPermissionState,
                         notificationPermissionState = notificationPermissionState,
-                        showDetectionLoadingDialog = showDetectionLoadingDialog
+                        showDetectionLoadingDialog = showDetectionLoadingDialog,
+                        shizukuState = shizukuState,
+                        onRequestShizukuPermission = { shizukuManager.requestPermission() },
+                        shizukuKillEnabled = shizukuKillEnabled,
+                        onToggleShizukuKill = { enabled ->
+                            scope.launch {
+                                settingsRepository.setShizukuKillEnabled(enabled)
+                            }
+                        }
                     )
                 }
 
@@ -388,6 +435,16 @@ class MainActivity : ComponentActivity() {
             ContextCompat.registerReceiver(this, nsfwDetectedReceiver, nsfwFilter, 0)
         }
         LogUtils.i("MainActivity", "NSFW检测广播接收器已注册")
+
+        // 注册 Shizuku 监听器
+        Shizuku.addBinderReceivedListener(shizukuBinderReceivedListener)
+        Shizuku.addBinderDeadListener(shizukuBinderDeadListener)
+        Shizuku.addRequestPermissionResultListener(shizukuPermissionResultListener)
+        LogUtils.i("MainActivity", "Shizuku 监听器已注册")
+
+        // 初始化 Shizuku 状态
+        shizukuState = shizukuManager.getCurrentState()
+        LogUtils.i("MainActivity", "Shizuku 初始状态: $shizukuState")
 
         // 检查是否需要请求权限
         checkAndRequestPermission()
@@ -775,6 +832,16 @@ class MainActivity : ComponentActivity() {
             unregisterReceiver(nsfwDetectedReceiver)
             LogUtils.i("MainActivity", "NSFW检测广播接收器已注销")
         }
+
+        // 注销 Shizuku 监听器
+        try {
+            Shizuku.removeBinderReceivedListener(shizukuBinderReceivedListener)
+            Shizuku.removeBinderDeadListener(shizukuBinderDeadListener)
+            Shizuku.removeRequestPermissionResultListener(shizukuPermissionResultListener)
+            LogUtils.i("MainActivity", "Shizuku 监听器已注销")
+        } catch (e: Exception) {
+            LogUtils.e("MainActivity", "注销 Shizuku 监听器失败", e)
+        }
     }
 
     /**
@@ -817,7 +884,11 @@ fun ClashStyleAppContent(
     isLoading: Boolean,
     uiPermissionState: Boolean,
     notificationPermissionState: Boolean,
-    showDetectionLoadingDialog: Boolean
+    showDetectionLoadingDialog: Boolean,
+    shizukuState: ShizukuState = ShizukuState.NOT_RUNNING,
+    onRequestShizukuPermission: () -> Unit = {},
+    shizukuKillEnabled: Boolean = true,
+    onToggleShizukuKill: (Boolean) -> Unit = {}
 ) {
     // 状态
     val hasPermission = remember(uiPermissionState) { derivedStateOf {
@@ -867,16 +938,27 @@ fun ClashStyleAppContent(
         verticalArrangement = Arrangement.spacedBy(24.dp)
     ) {
         // 应用标题 - 调整位置：继续往下移
-        Column(
-            modifier = Modifier.fillMaxWidth(),
-            horizontalAlignment = Alignment.Start
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(start = 16.dp, top = 70.dp, end = 16.dp, bottom = 8.dp),
+            verticalAlignment = Alignment.CenterVertically
         ) {
             Text(
-                text = "direction",
+                text = "Direction",
                 fontSize = 32.sp,
                 fontWeight = FontWeight.Bold,
-                color = MaterialTheme.colorScheme.primary,
-                modifier = Modifier.padding(start = 16.dp,top = 70.dp, bottom = 8.dp)
+                color = MaterialTheme.colorScheme.primary
+            )
+
+            Spacer(modifier = Modifier.weight(1f))
+
+            // Shizuku 状态指示灯
+            ShizukuIndicator(
+                state = shizukuState,
+                onRequestPermission = onRequestShizukuPermission,
+                killEnabled = shizukuKillEnabled,
+                onToggleKill = onToggleShizukuKill
             )
         }
 
@@ -1285,6 +1367,77 @@ fun LogDialog(
 }
 
 
+/**
+ * Shizuku 状态指示灯组件
+ *
+ * @param state Shizuku 状态
+ * @param onRequestPermission 点击请求权限回调（仅在 NO_PERMISSION 状态可点击）
+ * @param modifier 修饰符
+ */
+@Composable
+fun ShizukuIndicator(
+    state: ShizukuState,
+    onRequestPermission: () -> Unit = {},
+    killEnabled: Boolean = true,
+    onToggleKill: (Boolean) -> Unit = {},
+    modifier: Modifier = Modifier
+) {
+    val isRunning = state != ShizukuState.NOT_RUNNING
+    val isOn = killEnabled && isRunning
 
+    val backgroundColor = when {
+        !isRunning -> Color(0xFFE53935) // 红 — 未运行，开关禁用
+        isOn -> Color(0xFF43A047)        // 绿 — 运行中 + 开关开
+        else -> Color(0xFFFFA000)        // 黄 — 运行中 + 开关关
+    }
 
+    val toggle = {
+        if (isOn) {
+            onToggleKill(false)
+        } else if (state == ShizukuState.NO_PERMISSION) {
+            onToggleKill(true)
+            onRequestPermission()
+        } else {
+            onToggleKill(true)
+        }
+    }
 
+    Row(
+        modifier = modifier
+            .clip(RoundedCornerShape(5.dp))
+            .background(backgroundColor)
+            .clickable(enabled = isRunning, onClick = toggle)
+            .padding(start = 5.dp, end = 2.dp, top = 2.dp, bottom = 2.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(3.dp)
+    ) {
+        Text(
+            text = "SHIZUKU",
+            color = Color.White,
+            fontSize = 9.sp,
+            fontStyle = FontStyle.Italic,
+            fontWeight = FontWeight.Bold,
+            letterSpacing = 0.5.sp
+        )
+
+        // 自定义迷你开关
+        Box(
+            modifier = Modifier
+                .size(18.dp, 10.dp)
+                .clip(RoundedCornerShape(5.dp))
+                .background(
+                    if (isOn) Color.White.copy(alpha = 0.5f)
+                    else Color.White.copy(alpha = 0.25f)
+                )
+                .padding(1.dp),
+            contentAlignment = if (isOn) Alignment.CenterEnd else Alignment.CenterStart
+        ) {
+            Box(
+                modifier = Modifier
+                    .size(7.dp)
+                    .clip(RoundedCornerShape(3.5.dp))
+                    .background(Color.White)
+            )
+        }
+    }
+}

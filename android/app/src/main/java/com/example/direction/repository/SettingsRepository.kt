@@ -55,6 +55,9 @@ class SettingsRepository(private val context: Context) {
         // NSFW检测时回到主页
         private val BRING_TO_FOREGROUND = booleanPreferencesKey("bring_to_foreground")
 
+        // Shizuku 设置
+        private val SHIZUKU_KILL_ENABLED = booleanPreferencesKey("shizuku_kill_enabled")
+
         // 默认值
         private const val DEFAULT_START_HOUR = 22
         private const val DEFAULT_END_HOUR = 2
@@ -71,6 +74,9 @@ class SettingsRepository(private val context: Context) {
         private const val DEFAULT_BACKEND_FALLBACK_THRESHOLD_MARGIN = 5 // 0.05 * 100
         private const val DEFAULT_SAVE_DEBUG_IMAGES = true
         private const val DEFAULT_BRING_TO_FOREGROUND = false
+
+        // Shizuku 默认值
+        private const val DEFAULT_SHIZUKU_KILL_ENABLED = true
 
     }
 
@@ -331,6 +337,14 @@ class SettingsRepository(private val context: Context) {
         }
 
     /**
+     * Shizuku 应用强制停止设置
+     */
+    val shizukuKillEnabled: Flow<Boolean> = context.dataStore.data
+        .map { preferences ->
+            preferences[SHIZUKU_KILL_ENABLED] ?: DEFAULT_SHIZUKU_KILL_ENABLED
+        }
+
+    /**
      * 设置后端启用状态
      */
     suspend fun setBackendEnabled(enabled: Boolean) {
@@ -380,6 +394,15 @@ class SettingsRepository(private val context: Context) {
     }
 
     /**
+     * 设置Shizuku强制停止应用功能
+     */
+    suspend fun setShizukuKillEnabled(enabled: Boolean) {
+        context.dataStore.edit { preferences ->
+            preferences[SHIZUKU_KILL_ENABLED] = enabled
+        }
+    }
+
+    /**
      * 获取所有设置（用于备份或导出）
      */
     suspend fun getAllSettings(): kotlinx.coroutines.flow.Flow<Map<String, Any>> {
@@ -409,6 +432,7 @@ class SettingsRepository(private val context: Context) {
                 map.putIfAbsent(BACKEND_URL.name, DEFAULT_BACKEND_URL)
                 map.putIfAbsent(BACKEND_FALLBACK_THRESHOLD_MARGIN.name, DEFAULT_BACKEND_FALLBACK_THRESHOLD_MARGIN)
                 map.putIfAbsent(BRING_TO_FOREGROUND.name, DEFAULT_BRING_TO_FOREGROUND)
+                map.putIfAbsent(SHIZUKU_KILL_ENABLED.name, DEFAULT_SHIZUKU_KILL_ENABLED)
 
                 map
             }

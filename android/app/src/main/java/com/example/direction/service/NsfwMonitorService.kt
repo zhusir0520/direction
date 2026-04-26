@@ -31,6 +31,7 @@ import com.example.direction.detector.classifier.BackendNsfwDetector
 import com.example.direction.model.DetectionResult
 import com.example.direction.model.DebugImageData
 import com.example.direction.manager.FloatingWindowManager
+import com.example.direction.manager.ShizukuManager
 import com.example.direction.repository.DetectionRepository
 import com.example.direction.utils.NotificationUtils
 import kotlinx.coroutines.CoroutineScope
@@ -120,6 +121,7 @@ class NsfwMonitorService : Service() {
     private val notificationUtils by lazy { NotificationUtils(this) }
     private val detectionRepository by lazy { DetectionRepository(this) }
     private val settingsRepository by lazy { com.example.direction.repository.SettingsRepository(this) }
+    private val shizukuManager by lazy { ShizukuManager() }
 
     // 定时任务相关
     private val mainHandler = Handler(Looper.getMainLooper())
@@ -432,6 +434,11 @@ class NsfwMonitorService : Service() {
         detectionJob = CoroutineScope(Dispatchers.IO).launch {
             try {
 
+                // 0. 在截图前缓存前台应用包名（此时用户正在使用目标应用）
+                // 避免后续 DetectionResultActivity 跳转导致 mCurrentFocus=null
+                shizukuManager.updateCachedForegroundPackage()
+                LogUtils.d(TAG, "缓存的前台应用包名: ${shizukuManager.getCachedForegroundPackage()}")
+
                 // 1. 截图
                 LogUtils.d(TAG, "开始截图")
                 val screenshot = captureScreen()
@@ -556,6 +563,24 @@ class NsfwMonitorService : Service() {
                 // 4. 发送通知和震动（仅NSFW）
                 if (finalResult.isNSFW) {
                     LogUtils.i(TAG, "检测到NSFW内容，检查通知和震动设置")
+
+                    // 通过 Shizuku 强制停止前台应用（fire-and-forget，不阻塞主流程）
+                    CoroutineScope(Dispatchers.IO).launch {
+                        try {
+                            if (shizukuManager.isPermissionGranted()) {
+                                val shizukuKillEnabled = settingsRepository.shizukuKillEnabled.first()
+                                if (shizukuKillEnabled) {
+                                    shizukuManager.killForegroundApp()
+                                } else {
+                                    LogUtils.d(TAG, "Shizuku 强制停止功能已禁用")
+                                }
+                            } else {
+                                LogUtils.d(TAG, "Shizuku 未运行或binder无效，跳过强制停止")
+                            }
+                        } catch (e: Exception) {
+                            LogUtils.e(TAG, "Shizuku 强制停止前台应用失败", e)
+                        }
+                    }
 
                     // 读取通知和震动设置
                     val notificationEnabled = try {
