@@ -1,4 +1,8 @@
 <resources>
     <string name="app_name">Direction</string>
 
+    <!-- 无障碍服务 -->
+    <string name="accessibility_service_name">无障碍屏幕检测</string>
+    <string name="accessibility_service_description">一次授权后自动开机运行，无需重复授权。使用无障碍服务截取屏幕并进行 NSFW 内容检测，检测到违规内容时自动停止前台应用。</string>
+
 </resources>

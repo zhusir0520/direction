@@ -1,8 +1,10 @@
 package com.example.direction
 
 import android.Manifest
+import android.content.Intent
 import android.os.Build
 import android.os.Bundle
+import android.provider.Settings
 import android.widget.Toast
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
@@ -18,14 +20,18 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalLifecycleOwner
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.core.app.ActivityCompat
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.lifecycleScope
 import com.example.direction.repository.SettingsRepository
+import com.example.direction.service.NsfwAccessibilityService
 import com.example.direction.ui.theme.DirectionTheme
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
@@ -142,6 +148,12 @@ class SettingsViewModel(private val settingsRepository: SettingsRepository) : Vi
         settingsRepository.setSaveDebugImages(enabled)
     }
 
+    // 无障碍监控设置
+    val accessibilityMonitorEnabled = settingsRepository.accessibilityMonitorEnabled
+    suspend fun setAccessibilityMonitorEnabled(enabled: Boolean) {
+        settingsRepository.setAccessibilityMonitorEnabled(enabled)
+    }
+
     // 统计
     suspend fun getDetectionStats() = settingsRepository.getDetectionStats()
     suspend fun resetDetectionStats() {
@@ -176,6 +188,9 @@ fun SettingsScreen(
     var backendUrl by remember { mutableStateOf("") }
     var saveDebugImages by remember { mutableStateOf(true) }
 
+    var accessibilityMonitorEnabled by remember { mutableStateOf(true) }
+    var accessibilityServiceEnabled by remember { mutableStateOf(false) }
+
     // 从ViewModel加载设置
     LaunchedEffect(Unit) {
         // 检测设置
@@ -198,6 +213,22 @@ fun SettingsScreen(
         backendEnabled = viewModel.backendEnabled.first()
         backendUrl = viewModel.backendUrl.first()
         saveDebugImages = viewModel.saveDebugImages.first()
+
+        // 无障碍监控设置
+        accessibilityMonitorEnabled = viewModel.accessibilityMonitorEnabled.first()
+    }
+
+    // 无障碍服务状态（返回系统设置后刷新）
+    val lifecycleOwner = LocalLifecycleOwner.current
+    DisposableEffect(lifecycleOwner) {
+        accessibilityServiceEnabled = NsfwAccessibilityService.isEnabled(context)
+        val observer = LifecycleEventObserver { _, event ->
+            if (event == Lifecycle.Event.ON_RESUME) {
+                accessibilityServiceEnabled = NsfwAccessibilityService.isEnabled(context)
+            }
+        }
+        lifecycleOwner.lifecycle.addObserver(observer)
+        onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
     }
 
     // 检查通知权限
@@ -267,6 +298,47 @@ fun SettingsScreen(
                     steps = 99,
                     valueDisplay = { "${(it * 100).toInt()}%" }
                 )
+        }
+
+        Spacer(modifier = Modifier.height(16.dp))
+
+        // 无障碍监控设置
+        SettingsSection(title = "无障碍监控") {
+            Text(
+                text = "开启系统无障碍服务后，一次授权即可开机自动监控，无需重复授权录屏权限。",
+                fontSize = 13.sp,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+
+            SettingsSwitch(
+                title = "启用无障碍监控",
+                checked = accessibilityMonitorEnabled,
+                onCheckedChange = { checked ->
+                    accessibilityMonitorEnabled = checked
+                    scope.launch {
+                        viewModel.setAccessibilityMonitorEnabled(checked)
+                    }
+                }
+            )
+
+            Text(
+                text = if (accessibilityServiceEnabled) "系统无障碍服务已开启" else "系统无障碍服务未开启",
+                fontSize = 13.sp,
+                color = if (accessibilityServiceEnabled) {
+                    MaterialTheme.colorScheme.primary
+                } else {
+                    MaterialTheme.colorScheme.error
+                }
+            )
+
+            Button(
+                onClick = {
+                    context.startActivity(Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS))
+                },
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                Text(if (accessibilityServiceEnabled) "前往系统无障碍设置" else "前往系统开启")
+            }
         }
 
         Spacer(modifier = Modifier.height(16.dp))

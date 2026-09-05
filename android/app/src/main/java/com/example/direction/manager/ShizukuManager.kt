@@ -168,6 +168,16 @@ class ShizukuManager {
         LogUtils.d(TAG, "updateCachedForegroundPackage: cached=$cachedForegroundPackage, taskId=$cachedForegroundTaskId")
     }
 
+    /**
+     * 直接注入前台应用包名（供无障碍事件等无需 dumpsys 查询的场景使用）
+     * 同时清空 task ID（无障碍事件无法提供 task ID）
+     */
+    fun cacheForegroundPackage(packageName: String?) {
+        cachedForegroundPackage = packageName
+        cachedForegroundTaskId = null
+        LogUtils.d(TAG, "cacheForegroundPackage: injected=$packageName")
+    }
+
     /** 获取缓存的包名（不执行新查询） */
     fun getCachedForegroundPackage(): String? = cachedForegroundPackage
 

@@ -44,6 +44,7 @@ import androidx.compose.ui.res.painterResource
 import androidx.compose.foundation.shape.RoundedCornerShape
 import com.example.direction.manager.TimeWindowManager
 import com.example.direction.service.NsfwMonitorService
+import com.example.direction.service.NsfwAccessibilityService
 import com.example.direction.detector.classifier.NSFWClassifier
 import com.example.direction.detector.classifier.BackendNsfwDetector
 import com.example.direction.model.DetectionResult
@@ -107,6 +108,10 @@ class MainActivity : ComponentActivity() {
     private var notificationPermissionState by mutableStateOf(false)
     // 日志对话框显示状态
     private var showLogDialog by mutableStateOf(false)
+    // 无障碍服务是否已开启
+    private var accessibilityEnabled by mutableStateOf(false)
+    // 无障碍监控开关（应用内设置）
+    private var accessibilityMonitorEnabled by mutableStateOf(true)
 
     // 实时检测loading对话框显示状态
     private var showDetectionLoadingDialog by mutableStateOf(false)
@@ -326,6 +331,11 @@ class MainActivity : ComponentActivity() {
         // 初始化通知权限状态
         notificationPermissionState = notificationUtils.areNotificationsEnabled()
         LogUtils.i("MainActivity", "onCreate权限检查: 初始状态为false，通知权限=$notificationPermissionState")
+        // 初始化无障碍服务状态
+        refreshAccessibilityState()
+        scope.launch {
+            settingsRepository.accessibilityMonitorEnabled.collect { accessibilityMonitorEnabled = it }
+        }
 
         setContent {
             DirectionTheme {
@@ -359,7 +369,9 @@ class MainActivity : ComponentActivity() {
                             scope.launch {
                                 settingsRepository.setShizukuKillEnabled(enabled)
                             }
-                        }
+                        },
+                        accessibilityEnabled = accessibilityEnabled,
+                        onAccessibilityCardClick = { openAccessibilitySettings() }
                     )
                 }
 
@@ -461,6 +473,8 @@ class MainActivity : ComponentActivity() {
         // 更新通知权限状态（用户可能从设置中更改）
         notificationPermissionState = notificationUtils.areNotificationsEnabled()
         LogUtils.i("MainActivity", "onResume: 通知权限状态=$notificationPermissionState")
+        // 刷新无障碍服务状态（用户可能从系统无障碍设置返回）
+        refreshAccessibilityState()
 
         // 检查并恢复悬浮窗（如果已启用且有权限）
         scope.launch {
@@ -661,9 +675,42 @@ class MainActivity : ComponentActivity() {
     }
 
     /**
+     * 刷新无障碍服务状态
+     */
+    private fun refreshAccessibilityState() {
+        accessibilityEnabled = NsfwAccessibilityService.isEnabled(this)
+        LogUtils.i("MainActivity", "无障碍服务状态: $accessibilityEnabled")
+    }
+
+    /**
+     * 打开无障碍服务设置（未开启时跳系统无障碍列表，已开启时深链到本应用详情）
+     */
+    private fun openAccessibilitySettings() {
+        try {
+            val intent = if (accessibilityEnabled) {
+                Intent("android.settings.ACCESSIBILITY_DETAILS_SETTINGS").apply {
+                    data = Uri.parse("package:$packageName")
+                }
+            } else {
+                Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS)
+            }
+            startActivity(intent)
+        } catch (e: Exception) {
+            LogUtils.e("MainActivity", "打开无障碍设置失败", e)
+            Toast.makeText(this, "打开无障碍设置失败", Toast.LENGTH_SHORT).show()
+        }
+    }
+
+    /**
      * 切换录屏权限（开启/关闭）
      */
     private fun toggleScreenCapturePermission() {
+        // 无障碍优先：无障碍监控运行中时，停用手动录屏，避免双循环
+        if (accessibilityEnabled && accessibilityMonitorEnabled) {
+            LogUtils.i("MainActivity", "无障碍监控运行中，已停用手动录屏")
+            Toast.makeText(this, "无障碍监控运行中，已停用手动录屏", Toast.LENGTH_SHORT).show()
+            return
+        }
         val isServiceRunning = isNsfwMonitorServiceRunning()
         if (isServiceRunning) {
             // 如果服务正在运行，停止它
@@ -888,7 +935,9 @@ fun ClashStyleAppContent(
     shizukuState: ShizukuState = ShizukuState.NOT_RUNNING,
     onRequestShizukuPermission: () -> Unit = {},
     shizukuKillEnabled: Boolean = true,
-    onToggleShizukuKill: (Boolean) -> Unit = {}
+    onToggleShizukuKill: (Boolean) -> Unit = {},
+    accessibilityEnabled: Boolean = false,
+    onAccessibilityCardClick: () -> Unit = {}
 ) {
     // 状态
     val hasPermission = remember(uiPermissionState) { derivedStateOf {
@@ -967,7 +1016,51 @@ fun ClashStyleAppContent(
             modifier = Modifier.fillMaxWidth(),
             verticalArrangement = Arrangement.spacedBy(16.dp)
         ) {
-            // 1. 录屏按钮卡片
+            // 0. 无障碍监控卡片（主监控路径）
+            Card(
+                modifier = Modifier.fillMaxWidth(),
+                shape = RoundedCornerShape(16.dp),
+                colors = CardDefaults.cardColors(
+                    containerColor = if (accessibilityEnabled) {
+                        Color(0xFF4CAF50) // 绿色 - 已开启
+                    } else {
+                        Color(0xFF9E9E9E) // 灰色 - 未开启
+                    }
+                ),
+                onClick = {
+                    onAccessibilityCardClick()
+                }
+            ) {
+                Row(
+                    modifier = Modifier.padding(24.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(16.dp)
+                ) {
+                    // 无障碍监控图标
+                    Image(
+                        painter = painterResource(id = R.drawable.ic_screen_record),
+                        contentDescription = "无障碍监控图标",
+                        modifier = Modifier.size(28.dp)
+                    )
+                    Column(
+                        verticalArrangement = Arrangement.spacedBy(4.dp)
+                    ) {
+                        Text(
+                            text = if (accessibilityEnabled) "无障碍监控已开启" else "点击开启无障碍监控",
+                            fontSize = 18.sp,
+                            fontWeight = FontWeight.Medium,
+                            color = Color.White
+                        )
+                        Text(
+                            text = if (accessibilityEnabled) "一次授权，持续监控" else "一次授权，开机自动运行",
+                            fontSize = 12.sp,
+                            color = Color.White.copy(alpha = 0.9f)
+                        )
+                    }
+                }
+            }
+
+            // 1. 录屏按钮卡片（备用路径）
             Card(
                 modifier = Modifier.fillMaxWidth(),
                 shape = RoundedCornerShape(16.dp),
@@ -1004,7 +1097,13 @@ fun ClashStyleAppContent(
                             color = Color.White
                         )
                         Text(
-                            text = if (isScreenCaptureEnabled) "点击可关闭录屏权限" else "点击开启屏幕截图权限",
+                            text = if (accessibilityEnabled) {
+                                "备用模式（无障碍监控运行中）"
+                            } else if (isScreenCaptureEnabled) {
+                                "点击可关闭录屏权限"
+                            } else {
+                                "点击开启屏幕截图权限"
+                            },
                             fontSize = 12.sp,
                             color = Color.White.copy(alpha = 0.9f)
                         )

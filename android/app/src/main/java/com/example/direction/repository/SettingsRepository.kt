@@ -58,6 +58,9 @@ class SettingsRepository(private val context: Context) {
         // Shizuku 设置
         private val SHIZUKU_KILL_ENABLED = booleanPreferencesKey("shizuku_kill_enabled")
 
+        // 无障碍监控设置
+        private val ACCESSIBILITY_MONITOR_ENABLED = booleanPreferencesKey("accessibility_monitor_enabled")
+
         // 默认值
         private const val DEFAULT_START_HOUR = 22
         private const val DEFAULT_END_HOUR = 2
@@ -77,6 +80,9 @@ class SettingsRepository(private val context: Context) {
 
         // Shizuku 默认值
         private const val DEFAULT_SHIZUKU_KILL_ENABLED = true
+
+        // 无障碍监控默认值
+        private const val DEFAULT_ACCESSIBILITY_MONITOR_ENABLED = true
 
     }
 
@@ -345,6 +351,14 @@ class SettingsRepository(private val context: Context) {
         }
 
     /**
+     * 无障碍监控启用状态
+     */
+    val accessibilityMonitorEnabled: Flow<Boolean> = context.dataStore.data
+        .map { preferences ->
+            preferences[ACCESSIBILITY_MONITOR_ENABLED] ?: DEFAULT_ACCESSIBILITY_MONITOR_ENABLED
+        }
+
+    /**
      * 设置后端启用状态
      */
     suspend fun setBackendEnabled(enabled: Boolean) {
@@ -403,6 +417,15 @@ class SettingsRepository(private val context: Context) {
     }
 
     /**
+     * 设置无障碍监控启用状态
+     */
+    suspend fun setAccessibilityMonitorEnabled(enabled: Boolean) {
+        context.dataStore.edit { preferences ->
+            preferences[ACCESSIBILITY_MONITOR_ENABLED] = enabled
+        }
+    }
+
+    /**
      * 获取所有设置（用于备份或导出）
      */
     suspend fun getAllSettings(): kotlinx.coroutines.flow.Flow<Map<String, Any>> {
@@ -433,6 +456,7 @@ class SettingsRepository(private val context: Context) {
                 map.putIfAbsent(BACKEND_FALLBACK_THRESHOLD_MARGIN.name, DEFAULT_BACKEND_FALLBACK_THRESHOLD_MARGIN)
                 map.putIfAbsent(BRING_TO_FOREGROUND.name, DEFAULT_BRING_TO_FOREGROUND)
                 map.putIfAbsent(SHIZUKU_KILL_ENABLED.name, DEFAULT_SHIZUKU_KILL_ENABLED)
+                map.putIfAbsent(ACCESSIBILITY_MONITOR_ENABLED.name, DEFAULT_ACCESSIBILITY_MONITOR_ENABLED)
 
                 map
             }

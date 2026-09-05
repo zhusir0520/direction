@@ -7,7 +7,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 这是一个包含两个主要项目的 NSFW (Not Safe For Work) 图片检测系统代码库：
 
 1. **nsfw-server**: 基于 Spring Boot 2.6 + DJL 0.29 + ONNX Runtime 的 NSFW 图片检测 REST API 服务（Java 8/9）
-2. **android**: Android 客户端应用，使用 MediaProjection API 进行屏幕截图、TensorFlow Lite 进行本地 NSFW 分类，并可调用 nsfw-server 进行兜底检测
+2. **android**: Android 客户端应用，使用 MediaProjection API 或无障碍服务（`AccessibilityService.takeScreenshot`）进行屏幕截图、TensorFlow Lite 进行本地 NSFW 分类，可调用 nsfw-server 进行兜底检测，并通过 Shizuku 强制停止前台应用
 
 每个项目的详细文档位于各自的目录中：
 - [nsfw-server/CLAUDE.md](nsfw-server/CLAUDE.md) — 配置参数详解、模型管理、架构细节
@@ -56,7 +56,7 @@ cd android
 
 ```bash
 # 查看日志（过滤相关标签）
-adb logcat | grep -E "(DirectionApplication|NsfwMonitorService)"
+adb logcat | grep -E "(DirectionApplication|NsfwMonitorService|NsfwAccessibilityService|DetectionProcessor)"
 
 # 清除应用数据
 adb shell pm clear com.example.direction
@@ -102,7 +102,8 @@ curl -X POST -F "image=@test.jpg" http://localhost:8082/api/nsfw/detect
 ┌──────────────────┐              │
 │ 检测结果处理       │◄────────────┘
 │ 通知/震动/悬浮窗   │   兜底检测结果合并
-│ 历史记录存储       │   (逻辑或: Android || Backend)
+│ Shizuku强制停止    │   (逻辑或: Android || Backend)
+│ 历史记录存储       │
 └──────────────────┘
 ```
 
@@ -111,6 +112,8 @@ curl -X POST -F "image=@test.jpg" http://localhost:8082/api/nsfw/detect
 - **兜底检测机制**: 当 Android TFLite 分类结果为 SFW 时，自动调用后端进行二次验证
 - **结果合并**: `finalIsNsfw = androidResult.isNSFW || backendResult.backendIsNsfw`
 - **后端不可用**: 自动降级为仅使用 Android 检测结果
+- **Shizuku 强制停止**: 检测到 NSFW 时，通过 Shizuku 特权服务执行 `am force-stop` 强制停止前台应用（详见 [android/CLAUDE.md](android/CLAUDE.md)）
+- **无障碍服务（一次授权持续监控）**: 通过 `AccessibilityService.takeScreenshot()`（API 30+）替代 MediaProjection 单次令牌，系统绑定后开机自启、进程被杀自动重启，无需重复授权（详见 [android/CLAUDE.md](android/CLAUDE.md)）
 
 ### 后端 URL 配置
 
@@ -124,7 +127,7 @@ curl -X POST -F "image=@test.jpg" http://localhost:8082/api/nsfw/detect
 ## 调试工具
 
 - **后端调试 UI**: `nsfw-server/debug-ui.html` — 用于本地调试 NSFW 检测接口的 HTML 页面，支持图片上传和结果可视化
-- **Android 日志**: `adb logcat | grep -E "(DirectionApplication|NsfwMonitorService)"`
+- **Android 日志**: `adb logcat | grep -E "(DirectionApplication|NsfwMonitorService|NsfwAccessibilityService|DetectionProcessor)"`
 
 ## 本地配置
 

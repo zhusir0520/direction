@@ -18,34 +18,16 @@ import android.os.Build
 import android.os.Handler
 import android.os.IBinder
 import android.os.Looper
-import android.os.Vibrator
-import android.os.VibrationEffect
 import android.util.DisplayMetrics
-import android.util.Log
 import com.example.direction.utils.LogUtils
 import androidx.core.app.NotificationCompat
 import com.example.direction.R
-import com.example.direction.DetectionResultActivity
-import com.example.direction.detector.classifier.NSFWClassifier
-import com.example.direction.detector.classifier.BackendNsfwDetector
-import com.example.direction.model.DetectionResult
-import com.example.direction.model.DebugImageData
-import com.example.direction.manager.FloatingWindowManager
 import com.example.direction.manager.ShizukuManager
-import com.example.direction.repository.DetectionRepository
-import com.example.direction.utils.NotificationUtils
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
-import kotlinx.coroutines.async
-import kotlinx.coroutines.withContext
-import kotlinx.coroutines.withTimeout
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
-import java.nio.ByteBuffer
-import java.io.File
-import java.io.FileOutputStream
-import com.google.gson.Gson
 
 /**
  * NSFW监控前台服务
@@ -117,11 +99,9 @@ class NsfwMonitorService : Service() {
     private var displayDensity = 0
 
     // 组件
-    private val nsfwClassifier by lazy { NSFWClassifier(this) }
-    private val notificationUtils by lazy { NotificationUtils(this) }
-    private val detectionRepository by lazy { DetectionRepository(this) }
     private val settingsRepository by lazy { com.example.direction.repository.SettingsRepository(this) }
     private val shizukuManager by lazy { ShizukuManager() }
+    private val detectionProcessor by lazy { DetectionProcessor(this) }
 
     // 定时任务相关
     private val mainHandler = Handler(Looper.getMainLooper())
@@ -355,13 +335,6 @@ class NsfwMonitorService : Service() {
     }
 
     /**
-     * 创建Bitmap的副本
-     */
-    private fun createBitmapCopy(original: Bitmap): Bitmap {
-        return Bitmap.createBitmap(original)
-    }
-
-    /**
      * 启动周期性检测
      */
     private fun startPeriodicDetection() {
@@ -433,7 +406,6 @@ class NsfwMonitorService : Service() {
         detectionJob?.cancel()
         detectionJob = CoroutineScope(Dispatchers.IO).launch {
             try {
-
                 // 0. 在截图前缓存前台应用包名（此时用户正在使用目标应用）
                 // 避免后续 DetectionResultActivity 跳转导致 mCurrentFocus=null
                 shizukuManager.updateCachedForegroundPackage()
@@ -448,221 +420,11 @@ class NsfwMonitorService : Service() {
                 }
                 LogUtils.d(TAG, "截图成功，尺寸: ${screenshot.width}x${screenshot.height}")
 
-                // 2. 分类
-                LogUtils.d(TAG, "开始NSFW分类")
-                // 获取当前NSFW阈值
-                val nsfwThreshold = try {
-                    settingsRepository.nsfwThreshold.first()
-                } catch (e: Exception) {
-                    LogUtils.e(TAG, "读取NSFW阈值失败，使用默认值", e)
-                    NSFWClassifier.DEFAULT_NSFW_THRESHOLD
-                }
-                LogUtils.d(TAG, "使用NSFW阈值: $nsfwThreshold")
-                val androidResult = nsfwClassifier.classify(screenshot, nsfwThreshold)
-                LogUtils.d(TAG, "Android分类完成: isNSFW=${androidResult.isNSFW}, confidence=${androidResult.confidence}, error=${androidResult.error}")
-
-                // 后台检测逻辑：根据设置和Android检测结果决定是否调用远程检测
-                // 规则：
-                // 1. 检查backendEnabled开关，如果为false则不调用远程检测
-                // 2. 如果backendEnabled为true，但Android检测结果为NSFW，则不调用远程检测
-                // 3. 只有Android检测结果为SFW时才调用远程检测进行兜底验证
-                var backendResult: DetectionResult? = null
-                var finalResult = androidResult
-
-                // 检查后端是否启用
-                val backendEnabled = try {
-                    settingsRepository.backendEnabled.first()
-                } catch (e: Exception) {
-                    LogUtils.e(TAG, "读取后端启用状态失败，使用默认值", e)
-                    true // 默认启用
-                }
-                LogUtils.i(TAG, "后台检测决策: backendEnabled=$backendEnabled, androidResult.isNSFW=${androidResult.isNSFW}, confidence=${androidResult.confidence}")
-
-                if (backendEnabled) {
-                    // 读取后端URL
-                    val backendUrl = try {
-                        val url = settingsRepository.backendUrl.first()
-                        LogUtils.i(TAG, "读取后端URL: $url")
-                        url
-                    } catch (e: Exception) {
-                        LogUtils.e(TAG, "读取后端URL失败", e)
-                        null
-                    }
-
-                    if (backendUrl != null && backendUrl.isNotEmpty()) {
-                        // 检查Android检测结果，只有SFW时才调用远程检测
-                        if (!androidResult.isNSFW) {
-                            LogUtils.i(TAG, "Android检测结果为SFW（isNSFW=false），启动后端兜底检测")
-                            try {
-                                // 执行后端检测（无超时限制）
-                                backendResult = performFallbackDetection(screenshot, backendUrl, nsfwThreshold)
-
-                                if (backendResult != null) {
-                                    LogUtils.i(TAG, "后端兜底检测完成: isNsfw=${backendResult.backendIsNsfw}, confidence=${backendResult.backendConfidence}")
-                                    // 合并结果
-                                    finalResult = mergeDetectionResults(androidResult, backendResult)
-                                    LogUtils.i(TAG, "合并后最终结果: isNSFW=${finalResult.isNSFW}, 后端结果: ${backendResult.backendIsNsfw}")
-
-                                    // 立即保存debugImages到文件并清理base64，减少内存峰值
-                                    // 后端返回的debug图片base64可能非常大（每个数MB），
-                                    // 先保存到文件再清理内存，既保留图片又释放内存
-                                    if (finalResult.debugImages != null && finalResult.debugImages!!.isNotEmpty()) {
-                                        finalResult = detectionRepository.saveDebugImagesImmediately(finalResult)
-                                        LogUtils.d(TAG, "已保存debugImages到文件并清理base64")
-                                    }
-                                } else {
-                                    LogUtils.w(TAG, "后端检测返回null，使用Android结果")
-                                    finalResult = androidResult
-                                }
-                            } catch (e: Exception) {
-                                LogUtils.w(TAG, "后端检测失败: ${e.message}")
-                                // 失败时，使用Android结果
-                                finalResult = androidResult
-                            }
-                        } else {
-                            LogUtils.i(TAG, "Android检测结果为NSFW（isNSFW=true），跳过远程检测，直接使用Android结果")
-                            finalResult = androidResult
-                        }
-                    } else {
-                        LogUtils.w(TAG, "后端URL为空或无效，无法执行远程检测")
-                        finalResult = androidResult
-                    }
-                } else {
-                    LogUtils.i(TAG, "后端检测已禁用，仅使用Android检测结果")
-                    finalResult = androidResult
-                }
-
-                // 3. 保存结果（NSFW和SFW内容都保存截图）
-                // 创建Bitmap副本用于保存，然后立即回收原始Bitmap释放内存
-                val screenshotCopy = createBitmapCopy(screenshot)
-                screenshot.recycle()
-
-                // 读取调试图片保存设置
-                val saveDebugImages = try {
-                    settingsRepository.saveDebugImages.first()
-                } catch (e: Exception) {
-                    LogUtils.e(TAG, "读取调试图片保存设置失败，使用默认值false", e)
-                    false // 默认不保存调试图片
-                }
-                LogUtils.d(TAG, "调试图片保存设置: $saveDebugImages")
-
-                // 在saveResult之前保存临时截图文件（saveResult会回收Bitmap）
-                val tempScreenshotFile = File(cacheDir, "temp_screenshot_${System.currentTimeMillis()}.jpg")
-                try {
-                    FileOutputStream(tempScreenshotFile).use { out ->
-                        screenshotCopy.compress(Bitmap.CompressFormat.JPEG, 80, out)
-                    }
-                    LogUtils.d(TAG, "临时截图已保存: ${tempScreenshotFile.absolutePath}")
-                } catch (e: Exception) {
-                    LogUtils.e(TAG, "保存临时截图失败", e)
-                }
-
-                detectionRepository.saveResult(finalResult, screenshotCopy, null, saveDebugImages)
-                LogUtils.d(TAG, "结果已保存（包含截图）")
-
-                // 4. 发送通知和震动（仅NSFW）
-                if (finalResult.isNSFW) {
-                    LogUtils.i(TAG, "检测到NSFW内容，检查通知和震动设置")
-
-                    // 通过 Shizuku 强制停止前台应用（fire-and-forget，不阻塞主流程）
-                    CoroutineScope(Dispatchers.IO).launch {
-                        try {
-                            if (shizukuManager.isPermissionGranted()) {
-                                val shizukuKillEnabled = settingsRepository.shizukuKillEnabled.first()
-                                if (shizukuKillEnabled) {
-                                    shizukuManager.killForegroundApp()
-                                } else {
-                                    LogUtils.d(TAG, "Shizuku 强制停止功能已禁用")
-                                }
-                            } else {
-                                LogUtils.d(TAG, "Shizuku 未运行或binder无效，跳过强制停止")
-                            }
-                        } catch (e: Exception) {
-                            LogUtils.e(TAG, "Shizuku 强制停止前台应用失败", e)
-                        }
-                    }
-
-                    // 读取通知和震动设置
-                    val notificationEnabled = try {
-                        settingsRepository.notificationEnabled.first()
-                    } catch (e: Exception) {
-                        LogUtils.e(TAG, "读取通知设置失败，使用默认值", e)
-                        true // 默认启用
-                    }
-
-                    val vibrationEnabled = try {
-                        settingsRepository.vibrationEnabled.first()
-                    } catch (e: Exception) {
-                        LogUtils.e(TAG, "读取震动设置失败，使用默认值", e)
-                        true // 默认启用
-                    }
-
-                    val soundEnabled = try {
-                        settingsRepository.soundEnabled.first()
-                    } catch (e: Exception) {
-                        LogUtils.e(TAG, "读取声音设置失败，使用默认值", e)
-                        true // 默认启用
-                    }
-
-                    val showDetail = try {
-                        settingsRepository.bringToForeground.first()
-                    } catch (e: Exception) {
-                        LogUtils.e(TAG, "读取回到主页设置失败，使用默认值", e)
-                        false
-                    }
-
-                    LogUtils.d(TAG, "通知设置: enabled=$notificationEnabled, 震动: $vibrationEnabled, 声音: $soundEnabled, 详情页: $showDetail")
-
-                    // 震动和通知独立执行，互不影响
-                    if (vibrationEnabled) {
-                        LogUtils.i(TAG, "触发震动提醒")
-                        // 在独立协程中执行震动，避免阻塞通知
-                        CoroutineScope(Dispatchers.IO).launch {
-                            try {
-                                vibrate()
-                            } catch (e: Exception) {
-                                LogUtils.e(TAG, "震动执行失败", e)
-                            }
-                        }
-                    } else {
-                        LogUtils.i(TAG, "震动提醒已禁用")
-                    }
-
-                    if (notificationEnabled) {
-                        LogUtils.i(TAG, "发送通知")
-                        // 在独立协程中发送通知，避免阻塞震动
-                        CoroutineScope(Dispatchers.IO).launch {
-                            try {
-                                notificationUtils.sendDetectionNotification(finalResult, enableVibration = false, enableSound = soundEnabled)
-                            } catch (e: Exception) {
-                                LogUtils.e(TAG, "通知发送失败", e)
-                            }
-                        }
-                    } else {
-                        LogUtils.i(TAG, "通知已禁用")
-                    }
-
-                    // 发送NSFW检测广播（用于悬浮窗警告）
-                    sendNsfwDetectedBroadcast()
-
-                    // 如果两者都禁用，至少记录日志
-                    if (!notificationEnabled && !vibrationEnabled) {
-                        LogUtils.i(TAG, "通知和震动均被禁用，仅记录检测结果")
-                    }
-
-                    // 展示检测结果详情页（不释放录屏，服务继续运行）
-                    if (tempScreenshotFile.exists()) {
-                        showDetectionResult(finalResult, tempScreenshotFile.absolutePath, showDetail)
-                    }
-                } else {
-                    LogUtils.i(TAG, "SFW内容，不发送通知")
-                }
-
-                // 5. 清理资源已完成（Bitmap在步骤3中已回收）
-                LogUtils.d(TAG, "资源已清理")
+                // 2. 交给共享检测管线处理（分类 → 后端兜底 → 保存 → 通知/震动/悬浮窗/强杀/详情页）
+                detectionProcessor.process(screenshot, shizukuManager.getCachedForegroundPackage())
 
                 val elapsed = System.currentTimeMillis() - startTime
-                LogUtils.i(TAG, "检测完成: ${if (finalResult.isNSFW) "NSFW" else "SFW"}, 耗时: ${elapsed}ms")
+                LogUtils.i(TAG, "检测完成，耗时: ${elapsed}ms")
             } catch (e: Exception) {
                 LogUtils.e(TAG, "检测异常", e)
             }
@@ -711,50 +473,6 @@ class NsfwMonitorService : Service() {
     }
 
     /**
-     * 发送NSFW检测广播并直接显示悬浮窗警告
-     * 用于触发悬浮窗警告（双保险：即时显示 + 广播通知Activity）
-     */
-    private fun sendNsfwDetectedBroadcast() {
-        try {
-            LogUtils.d(TAG, "准备发送NSFW检测广播")
-            val intent = Intent(ACTION_NSFW_DETECTED).apply { setPackage("com.example.direction") }
-            LogUtils.d(TAG, "广播Intent创建完成: action=$ACTION_NSFW_DETECTED, package=com.example.direction")
-
-            sendBroadcast(intent)
-            LogUtils.i(TAG, "已发送NSFW检测广播")
-            LogUtils.d(TAG, "广播发送完成")
-        } catch (e: Exception) {
-            LogUtils.e(TAG, "发送NSFW检测广播失败", e)
-        }
-
-        // 直接显示悬浮窗警告（不依赖Activity接收广播）
-        CoroutineScope(Dispatchers.Main).launch {
-            try {
-                val floatingEnabled = withContext(Dispatchers.IO) {
-                    settingsRepository.floatingWindowEnabled.first()
-                }
-                val showWarning = withContext(Dispatchers.IO) {
-                    settingsRepository.floatingWindowShowWarning.first()
-                }
-                LogUtils.d(TAG, "悬浮窗设置: enabled=$floatingEnabled, showWarning=$showWarning")
-
-                if (floatingEnabled && showWarning) {
-                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M &&
-                        !android.provider.Settings.canDrawOverlays(this@NsfwMonitorService)) {
-                        LogUtils.w(TAG, "没有悬浮窗权限，无法直接显示警告")
-                        return@launch
-                    }
-                    val fwm = FloatingWindowManager(this@NsfwMonitorService)
-                    fwm.showCenteredNotification("想想你该干什么！")
-                    LogUtils.i(TAG, "已直接从服务显示悬浮窗警告")
-                }
-            } catch (e: Exception) {
-                LogUtils.e(TAG, "直接显示悬浮窗警告失败", e)
-            }
-        }
-    }
-
-    /**
      * 清理资源
      */
     private fun cleanupResources() {
@@ -781,30 +499,6 @@ class NsfwMonitorService : Service() {
     }
 
     /**
-     * 触发震动提醒
-     * 使用3次震动模式：0ms延迟，1000ms震动，250ms暂停，1000ms震动，250ms暂停，1000ms震动
-     */
-    private fun vibrate() {
-        try {
-            val vibrator = getSystemService(Vibrator::class.java)
-            // 3次震动模式：0, 1000, 250, 1000, 250, 1000
-            val vibrationPattern = longArrayOf(0, 1000, 250, 1000, 250, 1000)
-
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-                // API 26+ 使用 VibrationEffect
-                vibrator.vibrate(VibrationEffect.createWaveform(vibrationPattern, -1))
-            } else {
-                // 旧版本使用 deprecated 方法
-                @Suppress("DEPRECATION")
-                vibrator.vibrate(vibrationPattern, -1)
-            }
-            LogUtils.d(TAG, "震动提醒已触发，3次震动模式")
-        } catch (e: Exception) {
-            LogUtils.e(TAG, "震动失败", e)
-        }
-    }
-
-    /**
      * 释放MediaProjection录屏资源（NSFW检测到后主动调用）
      * 先停止录屏再回到前台，避免vivo OriginOS强制停止MediaProjection
      */
@@ -827,34 +521,6 @@ class NsfwMonitorService : Service() {
     }
 
     /**
-     * 展示检测结果详情页
-     * 不释放录屏，服务继续运行
-     */
-    private fun showDetectionResult(result: DetectionResult, screenshotPath: String, showDetail: Boolean = true) {
-        try {
-            if (!showDetail) {
-                LogUtils.i(TAG, "回到详情页已禁用，不打开任何页面")
-                return
-            }
-
-            LogUtils.i(TAG, "展示检测结果详情页")
-            val cleanedResult = result.createCleanedCopy()
-            val gson = Gson()
-            val intent = Intent(this, DetectionResultActivity::class.java).apply {
-                putExtra(DetectionResultActivity.EXTRA_DETECTION_RESULT_JSON, gson.toJson(cleanedResult))
-                putExtra(DetectionResultActivity.EXTRA_SCREENSHOT_PATH, screenshotPath)
-                flags = Intent.FLAG_ACTIVITY_NEW_TASK or
-                        Intent.FLAG_ACTIVITY_CLEAR_TASK or
-                        Intent.FLAG_ACTIVITY_SINGLE_TOP
-            }
-            startActivity(intent)
-            LogUtils.i(TAG, "检测结果详情页已启动")
-        } catch (e: Exception) {
-            LogUtils.e(TAG, "展示检测结果详情页失败", e)
-        }
-    }
-
-    /**
      * 将应用带到前台
      */
     private fun bringAppToForeground() {
@@ -870,97 +536,6 @@ class NsfwMonitorService : Service() {
         } catch (e: Exception) {
             LogUtils.e(TAG, "将应用带到前台失败", e)
         }
-    }
-
-    /**
-     * 执行后端兜底检测
-     * @param screenshot 截图
-     * @param backendUrl 后端服务URL
-     * @param backendThreshold 后端阈值
-     * @return 后端检测结果，如果失败返回null
-     */
-    private suspend fun performFallbackDetection(
-        screenshot: Bitmap,
-        backendUrl: String,
-        backendThreshold: Float
-    ): DetectionResult? {
-        return try {
-            LogUtils.i(TAG, "开始后端兜底检测，URL: $backendUrl")
-            val backendDetector = BackendNsfwDetector(backendUrl, backendThreshold)
-            withTimeout(8000) {
-                backendDetector.detect(screenshot)
-            }
-        } catch (e: Exception) {
-            LogUtils.e(TAG, "后端兜底检测失败", e)
-            null
-        }
-    }
-
-    /**
-     * 合并Android和后端检测结果
-     * 最终isNSFW = isAndroidNsfw || isBackEndNsfw
-     * 根据Android检测结果和设置决定保存哪些后端信息：
-     * 1. 如果Android检测结果为NSFW：只保存基本后端信息（清除modelResults, yoloResult, debugImages）
-     * 2. 如果Android检测结果为SFW：保存完整的后端信息
-     * 3. 如果saveDebugImages为false：清除debugImages（即使Android结果为SFW）
-     */
-    private suspend fun mergeDetectionResults(
-        androidResult: DetectionResult,
-        backendResult: DetectionResult?
-    ): DetectionResult {
-        if (backendResult == null) {
-            // 无后端结果，返回Android结果
-            return androidResult
-        }
-
-        // 合并结果：最终NSFW判定为两者任一判定为NSFW
-        val finalIsNsfw = androidResult.isNSFW || backendResult.backendIsNsfw == true
-
-        // 读取调试图片保存设置
-        val saveDebugImages = try {
-            settingsRepository.saveDebugImages.first()
-        } catch (e: Exception) {
-            LogUtils.e(TAG, "读取调试图片保存设置失败", e)
-            false
-        }
-
-        // 决定保存哪些后端信息
-        val shouldSaveFullBackendInfo = !androidResult.isNSFW // SFW时保存完整信息
-
-        val modelOutputToSave = if (shouldSaveFullBackendInfo) backendResult.modelOutput else null
-        val yoloResultToSave = if (shouldSaveFullBackendInfo) backendResult.yoloResult else null
-        val debugImagesToSave = if (shouldSaveFullBackendInfo && saveDebugImages) {
-            // 清理和限制debugImages：清空Base64数据，只保留关键图片
-            cleanDebugImages(backendResult.debugImages)
-        } else null
-
-        LogUtils.d(TAG, "合并结果决策: Android.isNSFW=${androidResult.isNSFW}, shouldSaveFullBackendInfo=$shouldSaveFullBackendInfo, saveDebugImages=$saveDebugImages")
-
-        // 创建新的DetectionResult，根据条件保存后端信息
-        return androidResult.copy(
-            isNSFW = finalIsNsfw,
-            backendIsNsfw = backendResult.backendIsNsfw,
-            backendConfidence = backendResult.backendConfidence,
-            backendThreshold = backendResult.backendThreshold,
-            backendRawScores = backendResult.backendRawScores,
-            modelOutput = modelOutputToSave,
-            yoloResult = yoloResultToSave,
-            debugImages = debugImagesToSave,
-            backendResponseRaw = backendResult.backendResponseRaw
-        )
-    }
-
-    /**
-     * 清理调试图片：保留原始Base64数据，由DetectionRepository负责保存和清理
-     * @param debugImages 原始调试图片Map
-     * @return 原始的debugImages，DetectionRepository会保存文件并清空Base64
-     */
-    private fun cleanDebugImages(debugImages: Map<String, DebugImageData>?): Map<String, DebugImageData>? {
-        if (debugImages == null) return null
-
-        LogUtils.d(TAG, "debugImages清理: 数量=${debugImages.size}, 键=${debugImages.keys}")
-        // 不修改，返回原始数据，由DetectionRepository处理保存和清理
-        return debugImages
     }
 
     /**

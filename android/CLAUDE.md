@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## 项目概述
 
-"Direction" 是一个 Android 应用程序 (包名: `com.example.direction`)，24/7 自动检测屏幕上的 NSFW (Not Safe For Work) 内容。该应用使用 MediaProjection API 进行屏幕截图，TensorFlow Lite 进行内容分类，以及前台服务进行周期性检测调度。
+"Direction" 是一个 Android 应用程序 (包名: `com.example.direction`)，24/7 自动检测屏幕上的 NSFW (Not Safe For Work) 内容。该应用使用 MediaProjection API 或无障碍服务（`AccessibilityService.takeScreenshot`）进行屏幕截图，TensorFlow Lite 进行内容分类，以及前台服务进行周期性检测调度。最低支持 Android 11 (API 30)。
 
 ## 常用命令
 
@@ -177,6 +177,24 @@ UI层 (Compose) → 业务逻辑层 → 数据层
 - 通过 Intent 传递检测结果数据和截图，支持查看详细分类分数和后端检测信息
 - 返回主界面后自动清理数据，防止内存泄漏
 
+#### 12. Shizuku 强制停止前台应用
+- **`ShizukuManager.kt`** 通过 Shizuku（`dev.rikka.shizuku`）执行特权 shell 命令，在检测到 NSFW 时强制停止前台应用
+- **状态枚举** `ShizukuState`: `NOT_RUNNING`（服务未运行）、`NO_PERMISSION`（未授权）、`PERMISSION_GRANTED`（可用）
+- **前台应用识别**: 采用多级 `dumpsys` 解析策略获取前台应用包名——`dumpsys window` 的 `mCurrentFocus`/`mFocusedApp` → `dumpsys activity recents` 带时间过滤（仅 30 秒内活跃，避免误杀历史应用）→ `mResumedActivity` → recents 兜底 → window 原始输出/snapshot
+- **缓存机制**: 检测周期开始时通过 `updateCachedForegroundPackage()` 缓存前台应用包名和 task ID，避免跳转到 `DetectionResultActivity` 后前台包名变为自身
+- **强杀流程** `killForegroundApp()`: 优先用缓存包名（失效则实时检测重试 3 次），执行 `am force-stop <package>`，并尝试从最近任务移除卡片（`cmd activity task remove`）；自动排除系统应用（`com.android.*` 等前缀）和本应用自身
+- **权限与状态**: `AndroidManifest.xml` 注册 `rikka.shizuku.ShizukuProvider`；`MainActivity` 注册 binder 收发/权限结果监听器；主界面顶部显示 `ShizukuIndicator` 状态指示灯（红=未运行、绿=运行且开关开、黄=运行但开关关）
+- **设置**: `shizuku_kill_enabled`（默认开启）通过 `SettingsRepository` 管理；服务检测到 NSFW 时 fire-and-forget 调用，不阻塞主流程
+- **依赖**: `dev.rikka.shizuku:api/provider/aidl:13.1.5`
+
+#### 13. 无障碍服务（一次授权、持续监控）
+- **`NsfwAccessibilityService.kt`** 通过 `AccessibilityService.takeScreenshot()`（API 30+）抓屏，替代 MediaProjection 的单次令牌，实现一次授权后开机自启、进程被杀自动重启（无需 boot receiver）
+- **前台应用识别**: 通过无障碍事件 `TYPE_WINDOW_STATE_CHANGED` 的 `packageName` 缓存前台应用包名（并注入 `ShizukuManager.cacheForegroundPackage`），替代 Shizuku `dumpsys` 解析
+- **截图转换**: `takeScreenshot` → `ScreenshotResult.hardwareBuffer` → `Bitmap.wrapHardwareBuffer` → `.copy(ARGB_8888, false)` 软件位图 → `hardwareBuffer.close()`（`ScreenshotResult` 无 `close()` 方法）
+- **共享管线 `DetectionProcessor`**: 封装截图后的「分类 → 后端兜底 → 保存 → 通知/震动/悬浮窗/强杀/详情页」，MediaProjection 与无障碍两条路径复用
+- **互斥规则（无障碍优先）**: 无障碍监控开启时自动停掉手动录屏；手动录屏入口在无障碍开启时给出提示并不再发起 MediaProjection 请求，避免双循环
+- **配置**: `res/xml/accessibility_service_config.xml` 声明 `canTakeScreenshot=true`、`canRetrieveWindowContent=false`（避免 Android 14+ 额外「读取屏幕内容」授权）；Android 14+ 服务详情页「截屏」开关需保持开启
+
 ### 核心数据流
 1. **权限请求** – 用户通过 `MainActivity` 录屏卡片授予 MediaProjection 权限
 2. **服务启动** – `MainActivity` 启动 `NsfwMonitorService` 前台服务并传递权限结果
@@ -185,7 +203,7 @@ UI层 (Compose) → 业务逻辑层 → 数据层
 5. **内容分类** – `NSFWClassifier` 使用 TensorFlow Lite 处理截图，计算 NSFW/SFW 概率
 6. **后端兜底检测（可选）** – 当 Android 检测结果为 SFW 时触发后端检测，使用双模型架构和 YOLOv8s 物体检测进行二次验证
 7. **截图保存** – 截图通过 `ScreenshotManager` 保存到应用私有目录；路径记录在检测结果中
-8. **结果处理** – 通过 `NotificationUtils` 发送通知（仅针对 NSFW）；结果由 `DetectionRepository` 存储（包括截图路径和后端检测数据）；NSFW 时打开 `DetectionResultActivity` 详情页，服务继续运行不释放录屏
+8. **结果处理** – 通过 `NotificationUtils` 发送通知（仅针对 NSFW）；结果由 `DetectionRepository` 存储（包括截图路径和后端检测数据）；NSFW 时打开 `DetectionResultActivity` 详情页（服务继续运行不释放录屏），并通过 Shizuku 强制停止前台应用（若启用）
 9. **悬浮窗警告** – 如果悬浮窗启用，`FloatingWindowManager` 显示警告文本 5 秒（从 `NsfwMonitorService` 发送广播）
 10. **实时检测流程** – 用户通过主界面检测卡片选择图片，触发实时检测流程，结果在 `DetectionResultActivity` 中显示
 11. **历史记录查看** – 用户通过记录卡片进入 `HistoryActivity`，可选择记录查看详细结果（`HistoryDetailActivity`）
@@ -196,6 +214,7 @@ UI层 (Compose) → 业务逻辑层 → 数据层
 - **DataStore (1.0.0)** – 偏好设置管理
 - **Compose BOM (2024.09.00)** – UI 框架
 - **Gson (2.10.1)** – JSON 序列化
+- **Shizuku (13.1.5)** – 特权 shell 命令执行，用于检测到 NSFW 时强制停止前台应用
 
 ### 重要实现细节
 1. **MediaProjection 权限**: 权限直接通过 `MainActivity` 请求，结果传递给 `NsfwMonitorService` 以启动前台服务
@@ -214,6 +233,8 @@ UI层 (Compose) → 业务逻辑层 → 数据层
     - 后端 debug 图片的 base64 数据在收到响应后立即保存到文件并清理内存，防止 OOM
     - `DetectionRepository.saveResultInternal` 使用 `commit()` 而非 `apply()` 同步写入 SharedPreferences，防止进程被杀导致数据丢失
     - `BackendNsfwDetector` 设置连接超时 3s、读取超时 5s，防止网络请求挂起
+11. **Shizuku 强制停止**: 检测到 NSFW 时通过 `ShizukuManager` 执行 `am force-stop` 强制停止前台应用；前台包名在检测周期开始时缓存（`updateCachedForegroundPackage()`），避免跳转详情页后误判为本应用；强杀为 fire-and-forget 不阻塞主流程；主界面 `ShizukuIndicator` 显示状态（红/黄/绿），开关由 `shizuku_kill_enabled` 控制
+12. **无障碍服务**: `NsfwAccessibilityService` 使用 `takeScreenshot()` 抓屏（minSdk 30）；截图 HardwareBuffer 需 `.copy(ARGB_8888, false)` 转软件位图（否则 `getPixels` 抛 `IllegalStateException`）；`ScreenshotResult` 无 `close()` 方法，需 `hardwareBuffer.close()` 释放；`Bitmap.createBitmap` 对 immutable 位图会复用同一对象，创建副本需用 `.copy(ARGB_8888, true)`；互斥规则为无障碍优先
 
 ## 后端服务器概述
 
@@ -259,19 +280,25 @@ app/src/main/java/com/example/direction/
 ├── DetectionResultActivity.kt       # 实时检测结果页面（与历史详情界面一致）
 ├── manager/                         # 业务逻辑管理器
 │   ├── TimeWindowManager.kt        # 时间窗口逻辑
-│   ├── PermissionManager.kt        # 权限管理（当前未使用）
-│   └── FloatingWindowManager.kt    # 悬浮窗管理（NSFW 警告，拖拽和停靠）
+│   ├── FloatingWindowManager.kt    # 悬浮窗管理（NSFW 警告，拖拽和停靠）
+│   └── ShizukuManager.kt           # Shizuku 管理（强制停止前台应用）
 ├── service/                         # Android 服务
-│   └── NsfwMonitorService.kt       # NSFW 监控前台服务（MediaProjection，周期性检测）
+│   ├── NsfwMonitorService.kt       # NSFW 监控前台服务（MediaProjection，周期性检测）
+│   ├── NsfwAccessibilityService.kt # 无障碍监控服务（takeScreenshot，一次授权持续监控）
+│   └── DetectionProcessor.kt       # 共享检测管线（分类→兜底→保存→告警/强杀/详情页）
 ├── detector/classifier/             # 检测组件
 │   ├── NSFWClassifier.kt           # NSFW 分类器（TensorFlow Lite）
-│   └── BackendNsfwDetector.kt      # 后端兜底检测器（HTTP 客户端）
+│   ├── BackendNsfwDetector.kt      # 后端兜底检测器（HTTP 客户端）
+│   └── ImagePreprocessor.kt        # Bitmap → TFLite 输入预处理（224×224 RGB 归一化）
 ├── model/                           # 数据模型
 │   ├── DetectionResult.kt          # 检测结果数据类
 │   └── BackendResponseDto.kt       # 后端响应 DTO
 ├── repository/                      # 数据存储
 │   ├── SettingsRepository.kt       # 设置管理（DataStore）
 │   └── DetectionRepository.kt      # 检测历史存储（SharedPreferences + Gson）
+├── ui/                             # Compose 复用组件
+│   ├── DetectionDetailDialog.kt    # 检测详情对话框
+│   └── FullScreenImageViewer.kt    # 全屏图片查看器（缩放/平移）
 └── utils/                          # 工具类
     ├── NotificationUtils.kt        # 通知管理
     ├── ScreenshotManager.kt        # 截图文件管理（保存、加载、清理）
